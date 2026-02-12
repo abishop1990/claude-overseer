@@ -350,6 +350,7 @@ Present a prioritized report to the user:
 ## Project
 - Stack: [detected] | Branch: [current] | Uncommitted: N files
 - Last commit: "message" (time ago)
+- Phases run: 0b, 1, 2b, 2c, 4, 4b | Skipped: 0a (cached), 2a (no new code), 3b (library)
 
 ## Critical (fix now)
 - [build failures, test failures, security vulnerabilities in deps]
@@ -536,6 +537,105 @@ In **interactive mode**: show the diff summary and proposed commit message, then
 notification config (`on_cycle_complete: true`).
 
 After checkpoint, return to **Phase 0** for another cycle.
+
+---
+
+## User Interrupts
+
+The user can interrupt the overseer **at any point** with a message. When this happens:
+
+### Interrupt Protocol
+
+1. **Acknowledge immediately.** Echo back what the user said and what phase you were in:
+   > "Got it — you want [X]. I was in Phase 2 (deep analysis). Let me handle your request first."
+
+2. **Context-switch cleanly.** Save your current phase state mentally (what you'd found so
+   far, what remained). You'll need this to resume.
+
+3. **Handle the interrupt.** Treat the user's message as a top-priority task:
+   - If it's a **question** → answer it, then offer to resume
+   - If it's a **new task** → execute it (using the same quality standards), then offer to resume
+   - If it's a **redirect** ("actually, focus on X instead") → adjust the focus area and
+     restart the current cycle with the new focus
+   - If it's **feedback on the current work** ("that fix is wrong") → address it immediately
+
+4. **Resume or restart.** After handling the interrupt, ask:
+   > "Handled. Want me to resume the cycle where I left off, or start a fresh analysis?"
+
+   In **autopilot mode**, resume automatically unless the interrupt changed the project
+   state significantly (new files, reverted commits, etc.) — then restart the cycle.
+
+### Interrupt-Friendly Design
+
+- Between phases is a natural interrupt point — check for user messages before starting
+  each new phase
+- During long `[WORKING]` phases (especially Phase 5: Execute), break execution into
+  logical chunks so interrupts can be processed between them
+- Never ignore user input because you're "mid-phase" — the user always has priority
+- If you were mid-commit (Phase 6) when interrupted, finish the commit first to avoid
+  leaving the repo in a dirty state, then handle the interrupt
+
+---
+
+## Adaptive Phase Selection
+
+**Don't run every phase every cycle.** The overseer should be smart about which phases
+provide value based on context.
+
+### Phase Selection Rules
+
+| Condition | Skip these phases | Why |
+|-----------|------------------|-----|
+| No code changed since last cycle | Phase 1 (health), Phase 2 (analysis) | Nothing to re-check — results won't change |
+| Last cycle was analysis-only (no execution) | Phase 0a (detect stack) | Stack hasn't changed |
+| Focus area specified | All phases outside the focus | User told you what to care about |
+| Build failed last cycle and no code changed | Phase 2, 3, 3b | Fix the build first |
+| All tests pass and no new code | Phase 2a (test gaps) | Re-checking is wasteful |
+| Project is a library (no server) | Phase 3b (smoke test) | Nothing to smoke test |
+| No roadmap artifacts found | Phase 3 (roadmap) | Nothing to review |
+| First cycle of session | Run everything | Need the full picture |
+| 3+ cycles deep with code changes each time | Phase 0c (dep audit), Phase 2f (doc drift) | Slow checks that rarely change; run every 3rd cycle |
+
+### Adaptive Depth
+
+Scale analysis depth to project size and maturity:
+
+| Project size | Phase 2 depth | Subagent count |
+|-------------|--------------|----------------|
+| Small (<20 files) | Inline Grep/Glob, no subagents | 0-2 |
+| Medium (20-200 files) | 3-4 Explore subagents in parallel | 3-4 |
+| Large (200+ files) | Full 6 Explore subagents + targeted deep dives | 6-8 |
+
+### Smart Re-Analysis
+
+After execution (Phase 5), don't blindly re-run all analysis. Instead:
+
+1. **Targeted re-check:** Only re-analyze dimensions affected by the change:
+   - Fixed a bug → re-run health check + the specific scan that found the bug
+   - Added tests → re-run test count + health check
+   - Changed a server function → re-run security scan + doc drift check
+2. **Carry forward:** Findings from other dimensions are still valid — carry them into
+   the next report without re-scanning
+3. **Invalidation:** If the change touched >5 files or modified a core dependency,
+   invalidate all findings and do a full re-scan
+
+### Phase Execution Log
+
+Track which phases ran in each cycle in `overseer-state.json`:
+```json
+{
+  "last_phases_run": ["0b", "1", "2b", "2c", "4", "4b", "5", "6"],
+  "last_full_scan_cycle": 1,
+  "phase_skip_reasons": {
+    "0a": "cached from cycle 1",
+    "2a": "no new code since last scan",
+    "3b": "library project, no server"
+  }
+}
+```
+
+Show which phases were skipped (and why) at the top of the findings report so the user
+has transparency into the overseer's reasoning.
 
 ---
 
