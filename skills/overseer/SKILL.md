@@ -467,21 +467,75 @@ After completing the work, re-run the build and test commands to verify nothing 
 
 ---
 
-### Phase 6: Checkpoint
+### Phase 6: Checkpoint & Iteration Log `[WORKING]`
 
-After completing any piece of work, **always offer to commit**:
+Every piece of completed work gets an **atomic, structured commit** and a log entry.
+This makes the overseer's work reviewable, revertable, and auditable.
 
-1. Show a summary of what changed (files modified, lines added/removed)
-2. Propose a commit message following the project's conventions (check git log for style)
-3. Ask: "Commit this before moving on?" (default: yes)
+#### 6a. Structured Commit
 
-This prevents multi-cycle sessions from accumulating a massive uncommitted diff. Each
-piece of work gets its own atomic commit, making it easy to revert if a later cycle
-introduces a problem.
+Commit messages follow a machine-parseable format:
 
-If the user declines, note the uncommitted files in `overseer-state.json`.
+```
+[overseer/cycle-N] Short description of the change
 
-After checkpoint (or decline), return to **Phase 0** for another cycle.
+Category: bugfix|feature|test|quality|docs|perf|security|deps
+Cycle: N
+Trigger: [what finding prompted this — e.g., "Phase 2b: unwrap() in auth handler"]
+Plan: .claude/overseer-plan-cycle-N.md
+
+Detailed description of what was changed and why.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+The `[overseer/cycle-N]` prefix lets you filter overseer commits:
+```bash
+git log --oneline --grep="overseer/cycle"
+```
+
+#### 6b. Iteration Log
+
+Append to `.claude/overseer-log.md` after each cycle. This file is the **human-readable
+history** of what the overseer did across all sessions.
+
+```markdown
+## Cycle N — [ISO timestamp]
+
+**State:** [analysis-only | fix-applied | feature-planned | deferred]
+**Branch:** main
+**Health:** Build PASS | Tests 52/52 | Warnings 8 (-2)
+
+**Finding:** [what was identified as highest priority]
+**Action:** [what was done — or "deferred by user"]
+**Commit:** [hash] [message]
+**Files:** [list of modified files]
+**Duration:** ~[minutes] (N Opus messages, M subagent calls)
+
+---
+```
+
+This log serves multiple purposes:
+- **Session recovery** — if context compacts, read the log to understand what happened
+- **Team visibility** — share the log to show what autonomous work was done
+- **Cost tracking** — the duration/message counts help calibrate the cost budget
+- **Revert guide** — if something went wrong, the log shows exactly which commit to revert
+
+#### 6c. Commit Decision
+
+In **autopilot mode**: commit automatically (no prompt).
+
+In **interactive mode**: show the diff summary and proposed commit message, then ask:
+"Commit this?" with options:
+- "Yes, commit and continue" (default)
+- "Yes, commit and stop"
+- "No, keep changes uncommitted"
+- "No, revert changes" (for when the fix made things worse)
+
+**Send a notification** only if the user chose "stop on cycle complete" in their
+notification config (`on_cycle_complete: true`).
+
+After checkpoint, return to **Phase 0** for another cycle.
 
 ---
 
@@ -490,6 +544,8 @@ After checkpoint (or decline), return to **Phase 0** for another cycle.
 - After each cycle, briefly summarize what was done and what changed
 - Track across cycles: what you've already reported (don't repeat stale findings)
 - Write `overseer-state.json` after each cycle for cross-session persistence
+- Append to `.claude/overseer-log.md` after each cycle for human-readable history
+- Plan files go to `.claude/overseer-plan-cycle-N.md` (one per cycle that has a plan)
 - If the user says **"auto"** or **"autopilot"**, pick the top recommendation yourself
   and execute it, then loop — only pause for user input on ambiguous or dangerous decisions
 - If the user says **"stop"** or **"exit"**, end overseer mode with a session summary:
@@ -500,7 +556,18 @@ After checkpoint (or decline), return to **Phase 0** for another cycle.
   - Items deferred: [list]
   - Remaining top priorities: [top 3]
   - Warning trend: started at X, now at Y
+  - Total estimated cost: ~N Opus + M Haiku + K Sonnet messages
+  - Full log: .claude/overseer-log.md
   ```
+
+### Time-Boxed Sessions
+
+When the user specifies a time limit (e.g., "run for 15 minutes"), track elapsed time:
+- Note the start time at session begin
+- At the end of each cycle, check remaining time
+- If <3 minutes remain, skip to the session summary instead of starting a new cycle
+- If mid-execution when time expires, finish the current work and checkpoint — don't
+  leave half-done changes uncommitted
 
 ## Autopilot Guardrails
 
