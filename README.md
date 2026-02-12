@@ -18,11 +18,15 @@ Autonomous development overseer for [Claude Code](https://claude.ai/code). Triag
 
 - **Language agnostic** — auto-detects Rust, Node/TS, Python, Go, Java, .NET
 - **CLAUDE.md aware** — uses project-specific build/test commands
+- **Autonomy tiers** — cautious, balanced, or aggressive; you choose how much control to keep
 - **Smart rotation** — scans 2-3 dimensions per cycle, not all 6 every time
 - **Skips analysis when unnecessary** — build broken? just fix it. Open backlog? execute it.
+- **User queue** — say "add [feature]" anytime to steer what gets worked on next
 - **Attention states** — `[WORKING]` / `[PRESENTING]` / `[BLOCKED]` so you know when you're needed
 - **Notifications** — OS toast, Slack, ntfy.sh, or webhook when input is required
-- **Autopilot** — say "autopilot" and it picks + executes the best action with guardrails
+- **Adaptive learning** — tracks your approve/skip patterns to auto-adjust over time
+- **Session resume** — picks up where the last session left off
+- **Stuck detection** — defers findings after 3 failed attempts, asks for guidance
 - **Interruptible** — message at any time; it handles your request then resumes
 - **Cost optimized** — Haiku for searches/builds, Sonnet for code, Opus only for coordination
 
@@ -62,7 +66,23 @@ curl -o ~/.claude/skills/overseer/SKILL.md \
 /overseer smoke        # Functional smoke test
 ```
 
-During a session: "autopilot", "skip", "stop", or interrupt with any message.
+During a session:
+- **"autopilot"** — pick + execute best action with guardrails
+- **"skip"** — skip to next finding
+- **"add [description]"** — queue a feature/task for next cycle
+- **"show queue"** — see pending user-queued items
+- **"stop"** — stop and show session summary
+- Or interrupt with any message
+
+## Autonomy tiers
+
+| Tier | When things auto-execute | When you're asked |
+|------|-------------------------|-------------------|
+| **Cautious** | Never | Always |
+| **Balanced** (default) | Build/test fixes, dead imports, lint | Features, API changes, architecture |
+| **Aggressive** | Everything except guardrail items | API changes, auth/security, file deletion |
+
+Guardrail items (always ask): public API changes, file deletion, auth/security code, ambiguous test failures, CI/CD changes.
 
 ## How it stays efficient
 
@@ -70,11 +90,13 @@ During a session: "autopilot", "skip", "stop", or interrupt with any message.
 |-------------|-----|
 | Scan rotation | Max 2-3 analysis dimensions per cycle instead of all 6 |
 | Skip on failure | Build broken → fix it immediately, no analysis |
-| Skip on backlog | Open findings from last cycle → execute, don't re-scan |
-| Targeted re-scan | After a fix, only re-check affected dimensions |
+| Skip on backlog | Open findings or user queue → execute, don't re-scan |
+| Diff-scoped re-analysis | After a commit, prioritize changed files over full rescan |
+| Pattern batching | 3+ similar issues → one systematic fix, not N separate passes |
+| Adaptive learning | Auto-promotes categories you always approve, deprioritizes skipped ones |
 | Model delegation | Haiku for searches/builds, Sonnet for code, Opus for decisions |
 | No subagents for small projects | Inline Grep/Glob for <20 files |
-| Git log = audit trail | No separate iteration log file; `[overseer/cycle-N]` commits track everything |
+| Git log = audit trail | No separate log file; `[overseer/cycle-N]` commits track everything |
 
 ## License
 
