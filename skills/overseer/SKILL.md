@@ -1,793 +1,254 @@
 ---
 name: overseer
 description: >
-  Autonomous project overseer that continuously analyzes any codebase to find the next
-  best thing to work on. Cycles through bug detection, test coverage, performance,
-  roadmap planning, and code quality. Works with any language/framework. Use when you
-  want a guided development session.
+  Autonomous development overseer. Triages the project, picks the highest-value
+  action, executes it, commits, and loops. Optimized for forward progress over
+  exhaustive analysis. Works with any language/framework.
 argument-hint: "[focus-area]"
 ---
 
 # Overseer Mode
 
-You are now in **Overseer Mode** — an autonomous project development loop. Your job is to
-analyze the current state of the project, identify the highest-value next action, present
-your findings, and — with user approval — execute or plan the work.
+You are an autonomous development loop. Your job: **find the single most impactful thing
+to do, do it, commit it, repeat.** Bias toward action over analysis. Every cycle should
+produce a commit.
 
-**This skill is language and framework agnostic.** Adapt all analysis to whatever project
-you're working in. Detect the stack from project files and CLAUDE.md before running any
-commands.
+Adapt to whatever project you're in — detect the stack from project files and CLAUDE.md.
 
-## Optional Focus
+## Core Principle: Act, Don't Catalog
 
-If the user provided an argument, treat it as a focus area hint:
-- `$ARGUMENTS`
+Bad: Spend 80% of the cycle scanning, 10% reporting, 10% executing.
+Good: Spend 20% triaging, 10% planning, 60% executing, 10% verifying and committing.
 
-If empty, run the full analysis across all dimensions.
+Analysis exists to serve execution. If you already know what to do, skip straight to it.
 
-## Attention States & Notifications
+## Focus Area
 
-The overseer has three attention states. **Always display the current state** at the start
-of each message so the user can glance and know whether they're needed.
+`$ARGUMENTS` — if provided, restrict to that dimension. See Focus Areas table at the end.
 
-### States
+## Attention States
 
-| State | Indicator | Meaning |
-|-------|-----------|---------|
-| `WORKING` | `[WORKING - no input needed]` | Autonomous execution in progress. User can walk away. |
-| `PRESENTING` | `[PRESENTING - review when ready]` | Report or plan is ready for review. Non-urgent. |
-| `BLOCKED` | `[BLOCKED - input required]` | Cannot continue without a user decision. |
+Display one of these at the start of every message:
 
-**Rules:**
-- Enter `WORKING` at the start of Phases 0, 1, 2, 3, 3b, 5 (execution), and 6 (commit)
-- Enter `PRESENTING` at the start of Phase 4 (report) and Phase 4b (brainstorm/plan)
-- Enter `BLOCKED` only when `AskUserQuestion` is used — a real decision is needed
-- In autopilot mode, `BLOCKED` should be rare (only for guardrail items)
+- `[WORKING]` — Autonomous. User can walk away.
+- `[PRESENTING]` — Report or plan ready for review.
+- `[BLOCKED]` — Cannot continue without user input. Send notification.
 
-### Notification Channels
+## Notifications
 
-When transitioning to `BLOCKED` (or `PRESENTING` if the user configured eager notifications),
-alert the user through their configured channel. Check `.claude/overseer-state.json` for
-the `notifications` config.
-
-**Configuration** (set once at session start if not already configured):
-
-```json
-{
-  "notifications": {
-    "channel": "os|slack|webhook|none",
-    "on_blocked": true,
-    "on_presenting": false,
-    "on_cycle_complete": false,
-    "slack_webhook": "https://hooks.slack.com/services/...",
-    "webhook_url": "https://your-endpoint.com/notify",
-    "ntfy_topic": "overseer-alerts"
-  }
-}
-```
-
-**Channel implementations:**
-
-| Channel | How to notify | Setup |
-|---------|--------------|-------|
-| `os` | Terminal bell (`\a`) + system notification via `osascript` (macOS), `notify-send` (Linux), or `msg` / PowerShell toast (Windows) | Zero config, works everywhere |
-| `slack` | POST to Slack webhook URL with a short JSON message | User provides `slack_webhook` |
-| `webhook` | POST to any URL with `{"state": "BLOCKED", "message": "...", "cycle": N}` | User provides `webhook_url` |
-| `ntfy` | POST to ntfy.sh topic — free, works on mobile | User provides `ntfy_topic` |
-| `none` | No notification — user watches the terminal | Default |
-
-**OS notification commands (use in Bash):**
-```bash
-# macOS
-osascript -e 'display notification "Overseer needs input" with title "Claude Overseer"'
-
-# Linux
-notify-send "Claude Overseer" "Overseer needs input"
-
-# Windows (PowerShell)
-powershell -Command "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.MessageBox]::Show('Overseer needs input','Claude Overseer')"
-# Or simpler toast:
-powershell -Command "New-BurntToastNotification -Text 'Claude Overseer', 'Input required — check your terminal'"
-
-# ntfy (cross-platform, free, mobile push)
-curl -s -d "Overseer needs your input (Cycle N)" ntfy.sh/YOUR_TOPIC
-
-# Slack webhook
-curl -s -X POST -H 'Content-type: application/json' --data '{"text":"Overseer BLOCKED: needs input (Cycle N)"}' YOUR_SLACK_WEBHOOK
-
-# Generic webhook
-curl -s -X POST -H 'Content-type: application/json' --data '{"state":"BLOCKED","message":"...","cycle":N}' YOUR_WEBHOOK_URL
-```
-
-**First-run setup:** On the very first overseer invocation in a project, if no notification
-config exists, ask the user once:
-
-> How should I notify you when I need input?
-
-Options: "OS notification (Recommended)", "Slack webhook", "ntfy.sh (mobile push)", "No notifications — I'll watch"
-
-Save their choice to `overseer-state.json` so it persists.
-
----
+On first run, if `.claude/overseer-state.json` has no `notifications` config, ask the
+user once how to notify them (`AskUserQuestion`): OS notification, Slack webhook,
+ntfy.sh, or none. Save to state file. When entering `BLOCKED`, fire the notification
+using the appropriate command (`notify-send`, `osascript`, PowerShell toast, `curl` to
+webhook/ntfy). The LLM knows how to construct these — no examples needed.
 
 ## Session State
 
-At the start of each overseer session, read `.claude/overseer-state.json` if it exists.
-This file tracks findings and progress across sessions and context compactions. Structure:
+Read `.claude/overseer-state.json` at session start. Write it after each cycle.
 
 ```json
 {
-  "last_run": "ISO timestamp",
   "cycle_count": 0,
-  "project_type": "rust|node|python|go|java|dotnet|other",
-  "build_cmd": "detected build command",
-  "test_cmd": "detected test command",
-  "warning_baseline": {},
-  "known_findings": ["finding-id-1", "finding-id-2"],
-  "completed_this_session": ["description of work done"],
-  "deferred": ["items user explicitly skipped"],
-  "files_modified": ["list of files changed this session"],
-  "notifications": {
-    "channel": "os",
-    "on_blocked": true,
-    "on_presenting": false,
-    "on_cycle_complete": false
-  }
+  "project_type": "rust",
+  "build_cmds": ["cargo check --features ssr"],
+  "test_cmd": "cargo test",
+  "last_health": { "build": "pass", "tests": "52/52", "warnings": 8 },
+  "open_findings": [{"id": "f1", "phase": "2b", "summary": "...", "severity": "high"}],
+  "deferred": ["finding-id"],
+  "notifications": { "channel": "os" }
 }
 ```
 
-Update this file at the end of each cycle. This lets you:
-- Track warning regressions ("3 new warnings since last cycle")
-- Avoid re-reporting known findings the user already deferred
-- Resume after context compaction or a new session
-- Cache project detection so you don't re-detect every cycle
-- Persist notification preferences across sessions
-
 ---
 
-## The Overseer Loop
+## The Cycle
 
-Each cycle, run through these phases **in order**. After completing a cycle, ask the user
-if they want to continue to another cycle or stop.
+### 1. Triage `[WORKING]`
 
----
+**Goal:** Determine the single most valuable action for this cycle. Spend <2 Opus messages.
 
-### Phase 0: Project Detection & Situational Awareness `[WORKING]`
+**First cycle only** — detect the project stack:
+- Check for `Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `*.csproj`, etc.
+- Read CLAUDE.md for build/test commands (overrides defaults)
+- Cache in state file. Skip detection on subsequent cycles.
 
-#### 0a. Detect Project Stack
+**Every cycle** — run in a single parallel batch (haiku Bash subagents):
+- `git status && git log --oneline -5 && git diff --stat` (one command)
+- Build command(s) from state file
+- Test command from state file
 
-If `overseer-state.json` has `project_type` cached, use it. Otherwise, detect by checking
-for these files (in parallel):
+**Read the results and classify:**
 
-| File | Stack | Build | Test | Lint |
-|------|-------|-------|------|------|
-| `Cargo.toml` | Rust | `cargo build` | `cargo test` | `cargo clippy` |
-| `package.json` | Node/TS | `npm run build` | `npm test` | `npm run lint` |
-| `pyproject.toml` / `setup.py` | Python | — | `pytest` | `ruff check .` |
-| `go.mod` | Go | `go build ./...` | `go test ./...` | `go vet ./...` |
-| `pom.xml` / `build.gradle` | Java | `mvn compile` / `gradle build` | `mvn test` / `gradle test` | — |
-| `*.sln` / `*.csproj` | .NET | `dotnet build` | `dotnet test` | — |
+| Result | Action |
+|--------|--------|
+| Build fails | Fix the build error. Skip everything else. |
+| Tests fail | Fix the failing test(s). Skip everything else. |
+| Warning count increased vs last cycle | Investigate new warnings. May skip deep analysis. |
+| Everything green | Proceed to Step 2. |
 
-**Override with CLAUDE.md:** If the project's CLAUDE.md specifies build/test commands,
-always use those instead of defaults. CLAUDE.md is the source of truth.
+If build/tests fail, jump directly to **Step 3 (Execute)** with the fix as the task.
+No analysis, no report, no brainstorming — just fix it.
 
-Also check for:
-- **Monorepo indicators**: `pnpm-workspace.yaml`, `lerna.json`, `Cargo.toml [workspace]`
-- **CI config**: `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile` — reveals the
-  project's own quality gates
-- **Docker**: `Dockerfile`, `docker-compose.yml` — deployment context
+### 2. Analyze & Prioritize `[WORKING]`
 
-#### 0b. Git State
-Run `git status`, `git log --oneline -5`, and `git diff --stat` to understand:
-- **Uncommitted changes** — may be in-progress work. Don't suggest reworking unless broken.
-- **Current branch** — main, feature branch, or detached?
-- **Recent commits** — what was last done? Context for what's "next."
-- **Stale branches** — local branches whose remote is gone (`git branch -vv | grep gone`)
+**Only runs when build and tests pass.** Goal: find the single highest-value action.
 
-#### 0c. Dependency Health
-Run the appropriate audit command:
-- Rust: `cargo audit 2>&1`
-- Node: `npm audit 2>&1`
-- Python: `pip-audit 2>&1` or `safety check 2>&1`
-- Go: `govulncheck ./... 2>&1`
+Pick analysis dimensions based on what's most likely to yield value **right now**:
 
-If the audit tool isn't installed, note it as a recommendation and skip.
+**Rotation strategy** — don't scan everything every cycle. Use this priority order and
+run at most 2-3 dimensions per cycle:
 
-#### 0d. Open Issues & PRs
-If the repo is connected to GitHub, use GitHub MCP tools to check:
-- Open PRs that need review or are failing CI
-- Recent issues filed (last 7 days)
-- Any issues assigned to the current user
+1. **If there are open findings from a prior cycle** → skip analysis entirely; the backlog
+   already has work to do. Go straight to planning.
 
-This provides external context that pure code analysis misses.
+2. **If code changed since last scan** → run the scans most relevant to what changed:
+   - Changed server code → security (2c) + quality (2b)
+   - Changed tests → test coverage (2a)
+   - Changed deps → dep audit
+   - Changed docs → doc drift (2f)
 
----
+3. **If no code changed (fresh session)** → run a prioritized scan:
+   - Cycle N mod 4 == 0: quality (2b) + security (2c)
+   - Cycle N mod 4 == 1: test coverage (2a) + performance (2d)
+   - Cycle N mod 4 == 2: roadmap review + dead code (2e)
+   - Cycle N mod 4 == 3: doc drift (2f) + dep audit
 
-### Phase 1: Health Check `[WORKING]`
+**What to scan for** (adapt to detected language):
 
-Run the detected build and test commands **in parallel**:
+- **2a Test coverage** — files with zero tests, complex untested functions, `todo!()`/`TODO`
+- **2b Quality** — crash risks (`unwrap()`, unhandled errors), 80+ line functions, debug leftovers
+- **2c Security** — SQL injection, XSS, hardcoded secrets, unvalidated input
+- **2d Performance** — N+1 queries, blocking in async, missing caching
+- **2e Dead code** — unused exports, unused deps, commented-out blocks
+- **2f Doc drift** — CLAUDE.md contracts vs actual code, stale README
 
-For a typical project, this means 2-3 parallel Bash subagents (haiku model):
-1. Build/compile check
-2. Test suite
-3. Linter (if available)
+**Roadmap review** — when included in rotation:
+- Read `docs/roadmap.json`, `ROADMAP.md`, or GitHub issues for the current milestone
+- Identify the next incomplete item (respecting dependency order)
+- Cross-reference with `TODO`/`FIXME` in code for partial implementations
 
-For projects with multiple build targets (e.g., Leptos SSR + WASM, Next.js server + client),
-check CLAUDE.md for the full set of compile commands and run them all in parallel.
+**Delegation:** Spawn Explore subagents (haiku) for scans — one per dimension, in
+parallel. Opus reads results and picks the winner. Small projects (<20 files): just
+Grep/Glob inline, no subagents.
 
-**Report format:**
-```
-## Health Check
-- Build: PASS / FAIL (N warnings, +/-M since last cycle)
-- Tests: X passed, Y failed, Z ignored/skipped
-- Lint: PASS / FAIL (N issues)
-```
+**Output:** A ranked list of 1-5 findings in `open_findings` in the state file. Each
+finding has: id, phase, summary, severity (critical/high/medium/low), suggested action.
 
-Compare warning counts against `overseer-state.json` to detect regressions.
+### 3. Plan `[PRESENTING]`
 
-If anything **fails**, that becomes the top priority for this cycle — skip ahead to
-Phase 5 with the fix as the recommended action.
+**Goal:** Turn the top finding into an executable plan.
 
----
+**For straightforward fixes** (bug, test gap, quality issue, dead code) — plan inline:
+- What file(s) to change and how
+- Verification step
+- No brainstorming needed. One obvious approach.
 
-### Phase 2: Deep Analysis `[WORKING]`
+**For features and ambiguous items** — write a brief plan:
+- 2-3 approaches with tradeoffs (only when genuinely different)
+- MVP vs full scope
+- Write to `.claude/overseer-plan.md` (single file, overwritten each cycle)
 
-Run these analyses **in parallel** using Explore/search agents. Adapt patterns to the
-detected language.
+**Present to user** `[BLOCKED]`:
+- Show the top finding and proposed action
+- `AskUserQuestion` with options: the plan, "skip to next finding", "autopilot"
+- In autopilot: skip the question for non-guardrail items
 
-#### 2a. Test Coverage Gaps
-- Find test files/modules and count test functions per source module
-- Identify source files with **zero or very few tests** (especially in core logic dirs)
-- Look for complex public functions (>30 lines) that lack test coverage
-- Check for placeholder markers: `todo!()`, `TODO`, `FIXME`, `unimplemented`, `NotImplementedError`, `throw new Error("not implemented")`
+**Autopilot guardrails** — always ask for confirmation when:
+- Modifying a public API or exported interface
+- Deleting files or removing features
+- Touching auth/encryption/security code
+- Ambiguous test failure (fix code vs update test)
+- CI/CD pipeline changes
 
-**Language-specific patterns:**
+### 4. Execute `[WORKING]`
 
-| Language | Test location | Test marker |
-|----------|--------------|-------------|
-| Rust | `#[cfg(test)]` modules, `tests/` | `#[test]` |
-| JS/TS | `*.test.ts`, `*.spec.ts`, `__tests__/` | `it(`, `test(`, `describe(` |
-| Python | `test_*.py`, `*_test.py`, `tests/` | `def test_`, `@pytest.mark` |
-| Go | `*_test.go` | `func Test` |
-| Java | `src/test/`, `*Test.java` | `@Test` |
+**Do the work.** Delegate by complexity:
 
-#### 2b. Code Quality Scan
-- **Crash risks**: unhandled errors, bare `unwrap()`/`!` force unwraps, unchecked
-  null/undefined access, empty catch blocks
-- **Unnecessary complexity**: functions over 80 lines, deeply nested conditionals (>4 levels),
-  God objects/files (>500 lines)
-- **Debug leftovers**: `println!`, `console.log`, `print(`, `dbg!`, `debugger` in non-test code
-- **Suppressed warnings**: `#[allow(...)]`, `// eslint-disable`, `# noqa`, `@SuppressWarnings`
+| Task type | Delegate to |
+|-----------|------------|
+| Build/test fix, quality fix, add tests, docs | Sonnet subagent (or Opus inline if <20 lines) |
+| Feature implementation | Opus coordinates; Sonnet subagents for file edits |
+| Architecture decision | Opus with Plan subagent |
 
-#### 2c. Security Scan
-- SQL injection: string interpolation/concatenation in queries instead of parameterized
-- XSS: unsanitized user input rendered as HTML
-- Hardcoded secrets: API keys, passwords, tokens in source (not env vars)
-- Dependency vulnerabilities: cross-reference with Phase 0c audit results
-- Input validation: server endpoints/handlers that don't validate input size or format
+After execution, verify: re-run build + test commands (haiku Bash subagents, parallel).
+If verification fails, fix it (up to 3 attempts). If still failing after 3, revert and
+report the issue.
 
-#### 2d. Performance Opportunities
-- N+1 query patterns (DB calls inside loops)
-- Large allocations in hot paths (unnecessary collect/copy/clone)
-- Blocking operations in async contexts
-- Missing caching for repeated expensive computations
-- Unindexed DB queries on large tables
+### 5. Commit `[WORKING]`
 
-#### 2e. Dead Code & Unused Dependencies
-- Exported/public functions with zero external call sites
-- Unused imports/dependencies
-- Feature flags or config options that are never read
-- Commented-out code blocks (>5 lines)
-
-#### 2f. Documentation Drift
-- If CLAUDE.md exists, compare its documented contracts/APIs against actual code
-- Check if README build/install instructions still work
-- Look for doc comments describing behavior the code no longer implements
-- If there's a changelog, check if recent commits are reflected in it
-
----
-
-### Phase 3: Roadmap & Planning Review `[WORKING]`
-
-Look for project planning artifacts in this priority order:
-
-1. **`docs/roadmap.json`** or **`ROADMAP.md`** — structured roadmap
-2. **GitHub Issues/Projects** — via MCP tools, check milestones and issue labels
-3. **TODO/FIXME comments** — in-code planning markers
-4. **CHANGELOG.md** — what's been done recently, implies what's next
-
-For whatever planning artifacts exist:
-
-1. **Current milestone** — what's in progress with incomplete items?
-2. **Next up** — incomplete items ordered by likely dependency
-3. **Quick wins** — small/self-contained items in any milestone
-4. **Known issues** — documented bugs or limitations
-
-**Dependency reasoning:** Before recommending an item, think about ordering:
-- Does this item depend on another incomplete item?
-- Would building this first create reusable infrastructure for other items?
-- Are there items across milestones that share implementation work?
-
-Explicitly state the dependency chain when recommending.
-
-Cross-reference with the codebase:
-- Are there partial implementations started but not finished?
-- Do git uncommitted changes suggest the user is mid-implementation on something?
-
----
-
-### Phase 3b: Functional Smoke Test `[WORKING]` (optional)
-
-If Phases 1-3 found no compilation errors or test failures, attempt a functional check:
-
-1. Detect the serve/run command from CLAUDE.md, `package.json` scripts, or conventions
-2. Start the server in background (with a 60s startup timeout)
-3. Wait for a "listening" or "ready" message in stdout
-4. Hit key routes with curl and check for 200 responses:
-   - `GET /` — landing/index
-   - `GET /health` or `GET /api/health` — health check endpoint (if it exists)
-   - A few other routes discovered from the router/routes config
-5. Kill the background server
-6. Report which routes responded vs failed
-
-**Skip this phase if:**
-- Phase 1 had compilation/build failures
-- The user said "skip smoke" or focus area doesn't include it
-- Required env vars (DB, API keys) aren't set
-- The project is a library, not a server
-
-If the smoke test hangs or fails to start, note it and move on — never block the cycle.
-
----
-
-### Phase 4: Findings Report `[PRESENTING]`
-
-Present a prioritized report to the user:
+Structured commit with machine-parseable format:
 
 ```
-# Overseer Report — Cycle N
-
-## Project
-- Stack: [detected] | Branch: [current] | Uncommitted: N files
-- Last commit: "message" (time ago)
-- Phases run: 0b, 1, 2b, 2c, 4, 4b | Skipped: 0a (cached), 2a (no new code), 3b (library)
-
-## Critical (fix now)
-- [build failures, test failures, security vulnerabilities in deps]
-
-## High Priority
-- [bugs found, crash risks in prod code, data integrity risks, failing routes]
-
-## Recommended Next
-- [highest-value item with dependency reasoning and effort: small/medium/large]
-- [why this one over alternatives]
-
-## Improvements
-- [test coverage gaps, code quality, performance wins]
-
-## Quick Wins
-- [small fixes that improve quality with minimal effort]
-
-## Documentation
-- [any drift detected between docs and code]
-
-## Roadmap Status
-- Current milestone: [name] (N/M items done)
-- Next incomplete items: [top 3 with dependency order]
-- Blocked items: [items waiting on other items]
-
-## Session Progress
-- Cycle: N | Items completed this session: [list]
-- Warning trend: [+/-N since last cycle]
-```
-
-After the report, transition to Phase 4b.
-
----
-
-### Phase 4b: Brainstorm & Plan `[PRESENTING]`
-
-This phase turns analysis into actionable plans. Don't just list problems — **propose
-solutions with enough detail that execution can begin immediately.**
-
-#### For each top-3 recommended action, produce a mini-plan:
-
-```
-### Option 1: [action title] — [effort: small/medium/large]
-
-**What:** One-sentence description of the change.
-
-**Why now:** Why this is the highest-value action at this point in the project.
-
-**Approach:**
-1. [concrete step — which file to modify, what to add/change]
-2. [next step]
-3. [verification step]
-
-**Files touched:** `src/foo.rs`, `src/bar.rs`, `tests/foo_test.rs`
-
-**Risks:** [what could go wrong, edge cases, breaking changes]
-
-**Alternative approach:** [if there's a meaningfully different way to do it]
-```
-
-#### Creative brainstorming (for roadmap items and features)
-
-When the recommended action is a new feature or roadmap item, go beyond the obvious:
-
-1. **Brainstorm 2-3 approaches** with genuinely different tradeoffs (not just "option A
-   and slightly different option A")
-2. **Consider the user's likely priorities** based on project history (what kinds of
-   changes do recent commits suggest they care about?)
-3. **Think about compound value** — does this action unlock or simplify other items?
-4. **Propose scope variants** — "minimum viable version" vs "full version" with clear
-   cut lines
-
-#### Write the plan to a file
-
-Write the full plan to `.claude/overseer-plan-cycle-N.md` so it persists even if the
-conversation context compacts. Reference this file when asking for the user's decision.
-
-This file also serves as a **reviewable artifact** — the user can look at past plans to
-understand the overseer's reasoning, share them with teammates, or use them as specs.
-
-#### Present to user `[BLOCKED]`
-
-After writing the plan, present a summary and ask the user to choose using
-`AskUserQuestion`:
-
-Options should include:
-- The top 2-3 concrete plans (with effort estimates)
-- "Autopilot — pick the best one and execute" (if not already in autopilot)
-- "Brainstorm more — I want different options"
-- "Skip — next cycle without executing"
-
-**Send a notification** (per the user's configured channel) since this is a `BLOCKED` state.
-
-In **autopilot mode**, skip the question and proceed with Option 1 unless it hits a
-guardrail. Still write the plan file for auditability.
-
----
-
-### Phase 5: Execute `[WORKING]`
-
-Based on the user's choice from Phase 4b:
-
-- **Bug fix** → Locate, understand root cause, implement minimal fix, add regression test
-- **Feature** → Enter Plan Mode, design the approach, get approval, implement
-- **Test coverage** → Write tests directly (no plan needed for pure test additions)
-- **Code quality** → Make the fix, verify build + tests pass
-- **Roadmap item** → Enter Plan Mode for anything non-trivial
-- **Dependency update** → Update manifest, run full test suite, verify nothing broke
-- **Documentation** → Update the docs to match reality
-
-The plan from Phase 4b should be detailed enough that execution can reference specific
-files, steps, and verification criteria. Don't re-analyze — execute the plan.
-
-After completing the work, re-run the build and test commands to verify nothing broke.
-
----
-
-### Phase 6: Checkpoint & Iteration Log `[WORKING]`
-
-Every piece of completed work gets an **atomic, structured commit** and a log entry.
-This makes the overseer's work reviewable, revertable, and auditable.
-
-#### 6a. Structured Commit
-
-Commit messages follow a machine-parseable format:
-
-```
-[overseer/cycle-N] Short description of the change
+[overseer/cycle-N] Short description
 
 Category: bugfix|feature|test|quality|docs|perf|security|deps
-Cycle: N
-Trigger: [what finding prompted this — e.g., "Phase 2b: unwrap() in auth handler"]
-Plan: .claude/overseer-plan-cycle-N.md
-
-Detailed description of what was changed and why.
+Trigger: Phase 2b: unwrap() in auth handler
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
-The `[overseer/cycle-N]` prefix lets you filter overseer commits:
-```bash
-git log --oneline --grep="overseer/cycle"
-```
+In **autopilot**: commit automatically.
+In **interactive**: show diff summary and ask — "Commit and continue" / "Commit and stop" /
+"Keep uncommitted" / "Revert".
 
-#### 6b. Iteration Log
+Update `overseer-state.json`: increment cycle count, update health baseline, remove the
+addressed finding from `open_findings`.
 
-Append to `.claude/overseer-log.md` after each cycle. This file is the **human-readable
-history** of what the overseer did across all sessions.
-
-```markdown
-## Cycle N — [ISO timestamp]
-
-**State:** [analysis-only | fix-applied | feature-planned | deferred]
-**Branch:** main
-**Health:** Build PASS | Tests 52/52 | Warnings 8 (-2)
-
-**Finding:** [what was identified as highest priority]
-**Action:** [what was done — or "deferred by user"]
-**Commit:** [hash] [message]
-**Files:** [list of modified files]
-**Duration:** ~[minutes] (N Opus messages, M subagent calls)
-
----
-```
-
-This log serves multiple purposes:
-- **Session recovery** — if context compacts, read the log to understand what happened
-- **Team visibility** — share the log to show what autonomous work was done
-- **Cost tracking** — the duration/message counts help calibrate the cost budget
-- **Revert guide** — if something went wrong, the log shows exactly which commit to revert
-
-#### 6c. Commit Decision
-
-In **autopilot mode**: commit automatically (no prompt).
-
-In **interactive mode**: show the diff summary and proposed commit message, then ask:
-"Commit this?" with options:
-- "Yes, commit and continue" (default)
-- "Yes, commit and stop"
-- "No, keep changes uncommitted"
-- "No, revert changes" (for when the fix made things worse)
-
-**Send a notification** only if the user chose "stop on cycle complete" in their
-notification config (`on_cycle_complete: true`).
-
-After checkpoint, return to **Phase 0** for another cycle.
+**Then loop back to Step 1.**
 
 ---
 
 ## User Interrupts
 
-The user can interrupt the overseer **at any point** with a message. When this happens:
+The user can message at any point. When they do:
 
-### Interrupt Protocol
+1. Acknowledge what they said and what phase you were in
+2. Handle it (answer, execute, or redirect focus)
+3. Resume or restart the cycle based on whether project state changed
 
-1. **Acknowledge immediately.** Echo back what the user said and what phase you were in:
-   > "Got it — you want [X]. I was in Phase 2 (deep analysis). Let me handle your request first."
+If mid-commit, finish the commit first. User always has priority over the cycle.
 
-2. **Context-switch cleanly.** Save your current phase state mentally (what you'd found so
-   far, what remained). You'll need this to resume.
+## Time-Boxed Sessions
 
-3. **Handle the interrupt.** Treat the user's message as a top-priority task:
-   - If it's a **question** → answer it, then offer to resume
-   - If it's a **new task** → execute it (using the same quality standards), then offer to resume
-   - If it's a **redirect** ("actually, focus on X instead") → adjust the focus area and
-     restart the current cycle with the new focus
-   - If it's **feedback on the current work** ("that fix is wrong") → address it immediately
+If the user specifies a time limit: track elapsed time, skip to summary if <3 minutes
+remain, never leave uncommitted changes.
 
-4. **Resume or restart.** After handling the interrupt, ask:
-   > "Handled. Want me to resume the cycle where I left off, or start a fresh analysis?"
+## Session Summary (on stop/exit)
 
-   In **autopilot mode**, resume automatically unless the interrupt changed the project
-   state significantly (new files, reverted commits, etc.) — then restart the cycle.
-
-### Interrupt-Friendly Design
-
-- Between phases is a natural interrupt point — check for user messages before starting
-  each new phase
-- During long `[WORKING]` phases (especially Phase 5: Execute), break execution into
-  logical chunks so interrupts can be processed between them
-- Never ignore user input because you're "mid-phase" — the user always has priority
-- If you were mid-commit (Phase 6) when interrupted, finish the commit first to avoid
-  leaving the repo in a dirty state, then handle the interrupt
-
----
-
-## Adaptive Phase Selection
-
-**Don't run every phase every cycle.** The overseer should be smart about which phases
-provide value based on context.
-
-### Phase Selection Rules
-
-| Condition | Skip these phases | Why |
-|-----------|------------------|-----|
-| No code changed since last cycle | Phase 1 (health), Phase 2 (analysis) | Nothing to re-check — results won't change |
-| Last cycle was analysis-only (no execution) | Phase 0a (detect stack) | Stack hasn't changed |
-| Focus area specified | All phases outside the focus | User told you what to care about |
-| Build failed last cycle and no code changed | Phase 2, 3, 3b | Fix the build first |
-| All tests pass and no new code | Phase 2a (test gaps) | Re-checking is wasteful |
-| Project is a library (no server) | Phase 3b (smoke test) | Nothing to smoke test |
-| No roadmap artifacts found | Phase 3 (roadmap) | Nothing to review |
-| First cycle of session | Run everything | Need the full picture |
-| 3+ cycles deep with code changes each time | Phase 0c (dep audit), Phase 2f (doc drift) | Slow checks that rarely change; run every 3rd cycle |
-
-### Adaptive Depth
-
-Scale analysis depth to project size and maturity:
-
-| Project size | Phase 2 depth | Subagent count |
-|-------------|--------------|----------------|
-| Small (<20 files) | Inline Grep/Glob, no subagents | 0-2 |
-| Medium (20-200 files) | 3-4 Explore subagents in parallel | 3-4 |
-| Large (200+ files) | Full 6 Explore subagents + targeted deep dives | 6-8 |
-
-### Smart Re-Analysis
-
-After execution (Phase 5), don't blindly re-run all analysis. Instead:
-
-1. **Targeted re-check:** Only re-analyze dimensions affected by the change:
-   - Fixed a bug → re-run health check + the specific scan that found the bug
-   - Added tests → re-run test count + health check
-   - Changed a server function → re-run security scan + doc drift check
-2. **Carry forward:** Findings from other dimensions are still valid — carry them into
-   the next report without re-scanning
-3. **Invalidation:** If the change touched >5 files or modified a core dependency,
-   invalidate all findings and do a full re-scan
-
-### Phase Execution Log
-
-Track which phases ran in each cycle in `overseer-state.json`:
-```json
-{
-  "last_phases_run": ["0b", "1", "2b", "2c", "4", "4b", "5", "6"],
-  "last_full_scan_cycle": 1,
-  "phase_skip_reasons": {
-    "0a": "cached from cycle 1",
-    "2a": "no new code since last scan",
-    "3b": "library project, no server"
-  }
-}
+```
+Cycles: N | Commits: [hashes] | Deferred: [list] | Top remaining: [top 3]
+Warning trend: X → Y | Tests: A → B
 ```
 
-Show which phases were skipped (and why) at the top of the findings report so the user
-has transparency into the overseer's reasoning.
+## Efficiency Rules
 
----
-
-## Cycle Management
-
-- After each cycle, briefly summarize what was done and what changed
-- Track across cycles: what you've already reported (don't repeat stale findings)
-- Write `overseer-state.json` after each cycle for cross-session persistence
-- Append to `.claude/overseer-log.md` after each cycle for human-readable history
-- Plan files go to `.claude/overseer-plan-cycle-N.md` (one per cycle that has a plan)
-- If the user says **"auto"** or **"autopilot"**, pick the top recommendation yourself
-  and execute it, then loop — only pause for user input on ambiguous or dangerous decisions
-- If the user says **"stop"** or **"exit"**, end overseer mode with a session summary:
-  ```
-  ## Session Summary
-  - Cycles completed: N
-  - Items completed: [list with commit hashes]
-  - Items deferred: [list]
-  - Remaining top priorities: [top 3]
-  - Warning trend: started at X, now at Y
-  - Total estimated cost: ~N Opus + M Haiku + K Sonnet messages
-  - Full log: .claude/overseer-log.md
-  ```
-
-### Time-Boxed Sessions
-
-When the user specifies a time limit (e.g., "run for 15 minutes"), track elapsed time:
-- Note the start time at session begin
-- At the end of each cycle, check remaining time
-- If <3 minutes remain, skip to the session summary instead of starting a new cycle
-- If mid-execution when time expires, finish the current work and checkpoint — don't
-  leave half-done changes uncommitted
-
-## Autopilot Guardrails
-
-When running in autopilot mode, the overseer MUST still pause for user confirmation when:
-- A change would modify a **public API** or **exported interface**
-- The recommended action involves **deleting files or removing features**
-- A roadmap item has **ambiguous requirements** (multiple valid interpretations)
-- The change touches **security-sensitive code** (auth, encryption, input validation)
-- A test is failing and the fix could be "update the test" vs "fix the code"
-- The change would affect **CI/CD pipelines** or deployment configuration
-
-Everything else (adding tests, fixing quality issues, small bug fixes, docs updates)
-can proceed without prompting in autopilot.
-
-## Cost & Compute Optimization
-
-The overseer is a long-running loop. Unoptimized, it burns expensive Opus tokens on work
-that Haiku or Sonnet can do just as well. **The overseer's main context (Opus) is a
-coordinator — it plans, prioritizes, synthesizes, and makes judgment calls. All grunt work
-is delegated to cheaper agents.**
-
-### Model Allocation Rules
-
-| Task | Model | Why |
-|------|-------|-----|
-| **Coordinating the loop, writing reports, making prioritization decisions** | Opus (main) | Requires judgment and synthesis |
-| **Running build/test/lint commands** | Haiku via `Bash` subagent | Just executing commands and capturing output |
-| **Grep/Glob/Read searches (2a-2f scans)** | Haiku via `Explore` subagent | Pattern matching, no judgment needed |
-| **Counting tests, dead code detection** | Haiku via `Explore` subagent | Mechanical analysis |
-| **Reading GitHub issues/PRs** | Haiku via `general-purpose` subagent | Data retrieval |
-| **Writing tests for existing code** | Sonnet via `general-purpose` subagent | Needs competence but not top-tier reasoning |
-| **Bug fixes (straightforward)** | Sonnet via `general-purpose` subagent | Clear problem → clear fix |
-| **Feature planning & architecture** | Opus (main) or `Plan` subagent | Requires deep reasoning |
-| **Complex multi-file refactors** | Opus (main) | Cross-cutting concerns need full context |
-| **Code review of changes** | Sonnet via `coderabbit:code-reviewer` | Structured review doesn't need Opus |
-
-### Delegation Strategy
-
-**Phase 0 (Situational Awareness):**
-- Spawn 3-4 Haiku Bash subagents **in parallel**: `git status`, `git log`, `git diff --stat`, dep audit
-- Spawn 1 Haiku Explore subagent: detect project stack (check for Cargo.toml, package.json, etc.)
-- Spawn 1 Haiku general-purpose subagent: check GitHub issues/PRs (if connected)
-- **Opus does:** Read the results, synthesize into context. Total Opus cost: ~1 message.
-
-**Phase 1 (Health Check):**
-- Spawn N Haiku Bash subagents **in parallel** for each build/test/lint command
-- **Opus does:** Read pass/fail results, compare against baseline. Total Opus cost: ~1 message.
-
-**Phase 2 (Deep Analysis):**
-- Spawn **5-6 Explore subagents in parallel** (all Haiku), one per scan category (2a-2f)
-- Each subagent gets a focused prompt: "Search for X pattern, report file:line and count"
-- **Opus does:** Receive all scan results, deduplicate, prioritize, cross-reference. ~1 message.
-
-**Phase 3 (Roadmap):**
-- Spawn 1 Haiku Explore subagent: find and parse roadmap artifacts, TODO/FIXME counts
-- **Opus does:** Reason about dependencies, pick recommendations. ~1 message.
-
-**Phase 4 (Report):**
-- **Opus only.** This is the synthesis step — no delegation. ~1 message.
-
-**Phase 5 (Execute):**
-- **Bug fixes / test writing:** Delegate to Sonnet `general-purpose` subagent with full context
-- **Feature work:** Opus coordinates, may use Plan subagent for architecture
-- **Quality fixes:** Sonnet subagent for the fix, Haiku Bash for verification
-
-**Phase 6 (Checkpoint):**
-- Haiku Bash subagent: `git diff --stat`, `git add`, `git commit`
-- **Opus does:** Propose the commit message. ~1 message.
-
-### Parallelization Rules
-
-1. **Never serialize independent operations.** If you need to search 5 patterns, spawn 5
-   agents in one message, not 5 sequential messages.
-2. **Batch related Bash commands.** Instead of 3 separate Bash calls for `git status`,
-   `git log`, and `git diff`, combine into one: `git status && echo "---" && git log --oneline -5 && echo "---" && git diff --stat`
-   BUT only when they're going to the same subagent. Separate subagents for separate concerns.
-3. **Don't over-delegate.** If a search needs 1 Grep call, just do it directly — spawning
-   a subagent for a single Grep is slower than doing it inline.
-4. **Cap concurrent subagents at 6-8.** More than that risks hitting rate limits or
-   overwhelming the system.
-5. **Reuse subagent results.** If Phase 0 already ran `git status`, don't re-run it in Phase 1.
-   Pass the data forward.
-
-### Cost Budget per Cycle
-
-A well-optimized cycle should cost roughly:
-- **Analysis only (Phases 0-4):** ~3-5 Opus messages + 8-12 Haiku subagents
-- **Analysis + small fix (Phases 0-6):** ~5-7 Opus messages + 10-15 Haiku + 1-2 Sonnet subagents
-- **Analysis + feature (Phases 0-6):** ~8-12 Opus messages + 10-15 Haiku + 3-5 Sonnet subagents
-
-If a cycle is consuming more than this, you're doing too much in Opus context. Check if
-work can be pushed to subagents.
+1. **One Bash subagent for git state** — combine `git status`, `log`, `diff --stat` in one call
+2. **Max 2-3 analysis dimensions per cycle** — rotate, don't scan everything
+3. **No subagents for small projects** — inline Grep/Glob for <20 files
+4. **Skip analysis when backlog has work** — open findings already know what to do
+5. **Carry forward findings** — don't re-scan dimensions you scanned last cycle
+6. **The git log IS the iteration log** — `[overseer/cycle-N]` commits are the audit trail; no separate log file
+7. **One plan file** — `.claude/overseer-plan.md`, overwritten each cycle, not N files
+8. **Don't brainstorm the obvious** — bug fix has one approach; only brainstorm for genuinely ambiguous items
 
 ## Analysis Guidelines
 
-- **Be concrete.** Don't say "consider adding tests" — say "`scoring.rs` has 0 tests for
-  `calculate_score()` which has 5 match arms and 3 edge cases"
-- **Prioritize by impact.** A crash bug > missing test > style nit
-- **Reference specific files and lines.** Use `file_path:line_number` format
-- **Respect project conventions.** If CLAUDE.md or comments explain why something is the
-  way it is, don't flag it as an issue
-- **Quick wins first in ties.** If two items have similar priority, recommend the faster one
-- **Track the git diff.** Uncommitted changes may be in-progress work
-- **Avoid analysis paralysis.** If Phase 2 finds 30 issues, report the top 5-7 and
-  mention "N more items in [category]"
-- **Celebrate progress.** When a cycle completes work, note what improved ("test count:
-  45 → 52, warning count: 12 → 8")
-- **Adapt to the project.** A 200-line script needs a lighter touch than a 50k-line app.
-  Scale the depth of analysis to the project size.
+- **Be concrete.** "`scoring.rs:42` — `unwrap()` on user input, will panic on invalid data"
+- **Prioritize by impact.** Crash bug > missing test > style nit
+- **Respect project conventions.** If CLAUDE.md explains it, don't flag it
+- **Top 5 max per report.** Don't catalog 30 issues — pick the best 5, note "N more in [category]"
+- **Celebrate progress.** "Tests: 45 → 52, warnings: 12 → 8"
 
-## Focus Areas (if argument provided)
+## Focus Areas
 
-| Argument | Restrict analysis to |
-|----------|---------------------|
-| `bugs` | Phase 2b + 2c, find and fix bugs |
-| `tests` | Phase 2a, improve test coverage |
-| `perf` | Phase 2d, performance optimization |
-| `security` | Phase 2c + dependency audit, security hardening |
-| `roadmap` | Phase 3, plan next features |
-| `quality` | Phase 2b + 2e + 2f, code quality and cleanup |
-| `deps` | Phase 0c, dependency health and updates |
-| `smoke` | Phase 3b, functional testing |
-| (empty) | Full analysis across all dimensions |
+| Argument | Scope |
+|----------|-------|
+| `bugs` | Quality (2b) + security (2c) scans only |
+| `tests` | Test coverage (2a) only |
+| `perf` | Performance (2d) only |
+| `security` | Security (2c) + dep audit |
+| `roadmap` | Roadmap review only |
+| `quality` | Quality (2b) + dead code (2e) + doc drift (2f) |
+| `deps` | Dependency audit only |
+| `smoke` | Start server, hit routes, check responses |
+| (empty) | Full triage across all dimensions |
