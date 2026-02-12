@@ -1,0 +1,12 @@
+{
+  "name": "overseer",
+  "description": "Autonomous development overseer for Claude Code. Continuously analyzes any codebase to find bugs, test gaps, security issues, performance wins, and the next best thing to build. Runs in cycles with prioritized reports and optional autopilot mode.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Alan Bishop",
+    "email": "abishop1990@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/abishop1990/claude-overseer",
+  "repository": "https://github.com/abishop1990/claude-overseer",
+  "license": "MIT"
+}
