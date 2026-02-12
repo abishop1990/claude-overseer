@@ -1,63 +1,47 @@
 # claude-overseer
 
-An autonomous development overseer skill for [Claude Code](https://claude.ai/code). Continuously analyzes any codebase to find bugs, test gaps, security issues, performance wins, and the next best thing to build.
+Autonomous development overseer for [Claude Code](https://claude.ai/code). Triages your codebase, picks the highest-value action, executes it, commits it, and loops.
 
 ## What it does
 
-When you invoke `/overseer`, Claude enters a continuous development loop:
-
 ```
-Phase 0:  Situational Awareness  [WORKING]     — git state, dep audit, open issues/PRs
-Phase 1:  Health Check           [WORKING]     — build, test, lint (all in parallel)
-Phase 2:  Deep Analysis          [WORKING]     — test gaps, quality, security, perf, dead code, docs
-Phase 3:  Roadmap Review         [WORKING]     — parse roadmap artifacts, reason about dependencies
-Phase 3b: Smoke Test             [WORKING]     — start server, hit routes, check responses
-Phase 4:  Findings Report        [PRESENTING]  — prioritized report with file:line references
-Phase 4b: Brainstorm & Plan      [PRESENTING]  — concrete plans with approaches, risks, alternatives
-         → user decision          [BLOCKED]     — notification sent, pick an action
-Phase 5:  Execute                [WORKING]     — implement the chosen fix/feature/improvement
-Phase 6:  Checkpoint             [WORKING]     — structured commit, iteration log, loop back
+1. Triage    [WORKING]     — build, test, git state (parallel, <2 min)
+2. Analyze   [WORKING]     — 2-3 scans max, rotated per cycle
+3. Plan      [PRESENTING]  — concrete plan for the top finding
+4. Execute   [WORKING]     — do the work, verify build+tests pass
+5. Commit    [WORKING]     — structured [overseer/cycle-N] commit, loop back
 ```
 
-Each cycle produces a prioritized report, brainstorms concrete plans, and asks what to work on next. Say **"autopilot"** and it picks the top recommendation itself.
+**Core principle: Act, Don't Catalog.** 60% of each cycle is execution, not analysis. Every cycle should produce a commit.
 
 ## Features
 
-- **Language agnostic** — auto-detects Rust, Node/TS, Python, Go, Java, .NET from project files
-- **CLAUDE.md aware** — respects project-specific build commands, conventions, and contracts
-- **Attention states** — clear `[WORKING]` / `[PRESENTING]` / `[BLOCKED]` indicators so you know when you're needed
-- **Notifications** — OS toast, Slack webhook, ntfy.sh (mobile push), or generic webhook when input is needed
-- **Brainstorming** — doesn't just list problems; proposes 2-3 concrete approaches with effort, risks, and scope variants
-- **Cost optimized** — Haiku for searches/builds, Sonnet for fixes, Opus only for coordination
-- **Persistent state** — tracks findings, warning trends, and progress across context compactions
-- **Iteration log** — `.claude/overseer-log.md` records every cycle for auditability and team visibility
-- **Structured commits** — `[overseer/cycle-N]` prefixed, machine-filterable commit history
-- **Time-boxed sessions** — "run for 15 minutes" with graceful wind-down
-- **Focus modes** — `/overseer tests`, `/overseer security`, `/overseer roadmap`, etc.
-- **Autopilot guardrails** — won't modify public APIs, delete files, or touch auth code without asking
+- **Language agnostic** — auto-detects Rust, Node/TS, Python, Go, Java, .NET
+- **CLAUDE.md aware** — uses project-specific build/test commands
+- **Smart rotation** — scans 2-3 dimensions per cycle, not all 6 every time
+- **Skips analysis when unnecessary** — build broken? just fix it. Open backlog? execute it.
+- **Attention states** — `[WORKING]` / `[PRESENTING]` / `[BLOCKED]` so you know when you're needed
+- **Notifications** — OS toast, Slack, ntfy.sh, or webhook when input is required
+- **Autopilot** — say "autopilot" and it picks + executes the best action with guardrails
+- **Interruptible** — message at any time; it handles your request then resumes
+- **Cost optimized** — Haiku for searches/builds, Sonnet for code, Opus only for coordination
 
 ## Install
 
-### As a Claude Code plugin (shareable)
-
+**As a plugin:**
 ```bash
-# In Claude Code, add the plugin marketplace:
 /plugin marketplace add abishop1990/claude-overseer
-
-# Then install the overseer skill:
 /plugin install overseer
 ```
 
-### As a project-local skill (single project)
-
+**As a project skill:**
 ```bash
 mkdir -p .claude/skills/overseer
 curl -o .claude/skills/overseer/SKILL.md \
   https://raw.githubusercontent.com/abishop1990/claude-overseer/main/skills/overseer/SKILL.md
 ```
 
-### As a personal skill (all your projects)
-
+**As a personal skill (all projects):**
 ```bash
 mkdir -p ~/.claude/skills/overseer
 curl -o ~/.claude/skills/overseer/SKILL.md \
@@ -67,82 +51,30 @@ curl -o ~/.claude/skills/overseer/SKILL.md \
 ## Usage
 
 ```bash
-# Full analysis across all dimensions
-/overseer
-
-# Focus on a specific area
-/overseer tests      # Test coverage gaps
-/overseer bugs       # Bug detection + security scan
-/overseer perf       # Performance optimization
-/overseer security   # Security hardening + dependency audit
-/overseer roadmap    # Plan next features from roadmap
-/overseer quality    # Code quality + dead code + doc drift
-/overseer deps       # Dependency health and updates
-/overseer smoke      # Functional smoke testing
+/overseer              # Full triage
+/overseer tests        # Test coverage only
+/overseer bugs         # Bug detection + security
+/overseer perf         # Performance optimization
+/overseer security     # Security + dep audit
+/overseer roadmap      # Plan next features
+/overseer quality      # Code quality + dead code + doc drift
+/overseer deps         # Dependency audit
+/overseer smoke        # Functional smoke test
 ```
 
-### During a session
+During a session: "autopilot", "skip", "stop", or interrupt with any message.
 
-| Command | Effect |
-|---------|--------|
-| Pick from the report | Work on the selected item |
-| "next cycle" | Re-analyze without executing anything |
-| "auto" / "autopilot" | Let it pick and execute the top recommendation |
-| "brainstorm more" | Generate different options for the current finding |
-| "stop" / "exit" | End with a session summary |
+## How it stays efficient
 
-### Notifications
-
-On first run, the overseer asks how you'd like to be notified when it needs input:
-
-| Channel | How it works | Setup |
-|---------|-------------|-------|
-| **OS** (default) | System toast notification + terminal bell | Zero config |
-| **Slack** | Posts to a Slack channel via webhook | Provide webhook URL |
-| **ntfy** | Push notification to your phone via [ntfy.sh](https://ntfy.sh) | Provide topic name |
-| **Webhook** | POST JSON to any URL | Provide endpoint |
-| **None** | No notification — watch the terminal | — |
-
-Preferences are saved to `.claude/overseer-state.json` and persist across sessions.
-
-## How it saves you money
-
-The overseer is designed for long-running sessions. Without optimization, it would burn expensive Opus tokens on work that smaller models handle fine:
-
-| Work | Model | Why |
-|------|-------|-----|
-| Coordination, reports, prioritization | Opus | Needs judgment |
-| Build/test/lint commands | Haiku subagents | Just running commands |
-| Code searching (grep, glob) | Haiku subagents | Pattern matching |
-| Writing tests, simple bug fixes | Sonnet subagents | Competent but cheaper |
-| Feature architecture | Opus | Deep reasoning |
-| Code review | Sonnet (CodeRabbit) | Structured review |
-
-A typical analysis-only cycle costs ~3-5 Opus messages + 8-12 Haiku subagent calls.
-
-## Artifacts
-
-The overseer creates these files in your project's `.claude/` directory:
-
-| File | Purpose |
-|------|---------|
-| `overseer-state.json` | Session state, warning baselines, notification config |
-| `overseer-log.md` | Human-readable history of every cycle and action taken |
-| `overseer-plan-cycle-N.md` | Detailed plan for cycle N (approaches, risks, files) |
-
-Add these to `.gitignore` if you don't want them tracked, or commit them for team visibility.
-
-## Autopilot guardrails
-
-In autopilot mode, the overseer still pauses for confirmation when:
-
-- Modifying a public API or exported interface
-- Deleting files or removing features
-- Touching security-sensitive code (auth, encryption)
-- Ambiguous test failures (fix code vs update test?)
-- CI/CD pipeline changes
-
-Everything else (adding tests, quality fixes, doc updates) proceeds automatically.
+| Optimization | How |
+|-------------|-----|
+| Scan rotation | Max 2-3 analysis dimensions per cycle instead of all 6 |
+| Skip on failure | Build broken → fix it immediately, no analysis |
+| Skip on backlog | Open findings from last cycle → execute, don't re-scan |
+| Targeted re-scan | After a fix, only re-check affected dimensions |
+| Model delegation | Haiku for searches/builds, Sonnet for code, Opus for decisions |
+| No subagents for small projects | Inline Grep/Glob for <20 files |
+| Git log = audit trail | No separate iteration log file; `[overseer/cycle-N]` commits track everything |
 
 ## License
 
