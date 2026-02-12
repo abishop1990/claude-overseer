@@ -380,14 +380,77 @@ Present a prioritized report to the user:
 - Warning trend: [+/-N since last cycle]
 ```
 
-After the report, ask the user what to tackle using `AskUserQuestion` with the top 3-4
-recommended actions as options, plus an "autopilot" option.
+After the report, transition to Phase 4b.
 
 ---
 
-### Phase 5: Execute
+### Phase 4b: Brainstorm & Plan `[PRESENTING]`
 
-Based on the user's choice:
+This phase turns analysis into actionable plans. Don't just list problems — **propose
+solutions with enough detail that execution can begin immediately.**
+
+#### For each top-3 recommended action, produce a mini-plan:
+
+```
+### Option 1: [action title] — [effort: small/medium/large]
+
+**What:** One-sentence description of the change.
+
+**Why now:** Why this is the highest-value action at this point in the project.
+
+**Approach:**
+1. [concrete step — which file to modify, what to add/change]
+2. [next step]
+3. [verification step]
+
+**Files touched:** `src/foo.rs`, `src/bar.rs`, `tests/foo_test.rs`
+
+**Risks:** [what could go wrong, edge cases, breaking changes]
+
+**Alternative approach:** [if there's a meaningfully different way to do it]
+```
+
+#### Creative brainstorming (for roadmap items and features)
+
+When the recommended action is a new feature or roadmap item, go beyond the obvious:
+
+1. **Brainstorm 2-3 approaches** with genuinely different tradeoffs (not just "option A
+   and slightly different option A")
+2. **Consider the user's likely priorities** based on project history (what kinds of
+   changes do recent commits suggest they care about?)
+3. **Think about compound value** — does this action unlock or simplify other items?
+4. **Propose scope variants** — "minimum viable version" vs "full version" with clear
+   cut lines
+
+#### Write the plan to a file
+
+Write the full plan to `.claude/overseer-plan-cycle-N.md` so it persists even if the
+conversation context compacts. Reference this file when asking for the user's decision.
+
+This file also serves as a **reviewable artifact** — the user can look at past plans to
+understand the overseer's reasoning, share them with teammates, or use them as specs.
+
+#### Present to user `[BLOCKED]`
+
+After writing the plan, present a summary and ask the user to choose using
+`AskUserQuestion`:
+
+Options should include:
+- The top 2-3 concrete plans (with effort estimates)
+- "Autopilot — pick the best one and execute" (if not already in autopilot)
+- "Brainstorm more — I want different options"
+- "Skip — next cycle without executing"
+
+**Send a notification** (per the user's configured channel) since this is a `BLOCKED` state.
+
+In **autopilot mode**, skip the question and proceed with Option 1 unless it hits a
+guardrail. Still write the plan file for auditability.
+
+---
+
+### Phase 5: Execute `[WORKING]`
+
+Based on the user's choice from Phase 4b:
 
 - **Bug fix** → Locate, understand root cause, implement minimal fix, add regression test
 - **Feature** → Enter Plan Mode, design the approach, get approval, implement
@@ -396,6 +459,9 @@ Based on the user's choice:
 - **Roadmap item** → Enter Plan Mode for anything non-trivial
 - **Dependency update** → Update manifest, run full test suite, verify nothing broke
 - **Documentation** → Update the docs to match reality
+
+The plan from Phase 4b should be detailed enough that execution can reference specific
+files, steps, and verification criteria. Don't re-analyze — execute the plan.
 
 After completing the work, re-run the build and test commands to verify nothing broke.
 
