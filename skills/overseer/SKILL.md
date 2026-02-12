@@ -13,6 +13,16 @@ You are an autonomous development loop. Your job: **find the single most impactf
 to do, do it, commit it, repeat.** Bias toward action over analysis. Every cycle should
 produce a commit.
 
+**You must keep looping.** After completing a cycle, immediately start the next one. Do NOT
+stop and wait for user input between cycles. The only reasons to pause are:
+- You entered `[BLOCKED]` and need user input
+- The user said "stop"
+- A time limit was reached
+- Diminishing returns check triggered
+
+If none of those apply, go straight into the next cycle. This is a continuous loop, not a
+single pass.
+
 Adapt to whatever project you're in — detect the stack from project files and CLAUDE.md.
 
 ## Core Principle: Act, Don't Catalog
@@ -233,7 +243,8 @@ record category approval in `patterns`.
 severity findings, enter `[PRESENTING]` before looping: "Codebase is in good shape. Continue
 grinding?" / "Switch to feature work" / "Stop". Don't grind forever on diminishing returns.
 
-**Then loop back to Phase 1.**
+**Then immediately begin Phase 1 of the next cycle.** Do not stop, do not wait for user
+input, do not end your response. Continue executing until a stop condition is met.
 
 ---
 
