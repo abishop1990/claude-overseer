@@ -99,6 +99,10 @@ deprioritize it in analysis rotation.
 - Build command(s) from state file
 - Test command from state file
 
+**Skip redundant verification:** If the previous cycle's Phase 4 verification passed and
+`git diff --stat` shows no changes since last commit, skip build/test — just read git state.
+Only re-run build/test when there are uncommitted changes or it's the first cycle.
+
 **Route by result:**
 
 | Result | Action |
@@ -149,8 +153,10 @@ first. Only broaden scope if changed files are clean.
 **Pattern detection:** If 3+ instances of the same issue appear (e.g., 4 functions >80 lines),
 create ONE systematic finding instead of N separate ones.
 
-**Delegation:** Spawn Explore subagents per dimension in parallel — sonnet for security (2c)
-and quality (2b), haiku for the rest. Small projects (<20 files): inline Grep/Glob only.
+**Delegation:** Spawn Explore subagents per dimension in parallel — haiku for all initial
+scans. If haiku flags something that requires reasoning about control flow or data flow
+(e.g., auth logic, race conditions, complex state), escalate that specific finding to a
+sonnet subagent for deeper analysis. Small projects (<20 files): inline Grep/Glob only.
 
 **Output:** 1-5 ranked findings in `open_findings`. Each has: id, phase, summary, severity
 (critical/high/medium/low), confidence (high/medium/low), suggested action.
@@ -189,9 +195,11 @@ resume the existing plan at the next uncompleted step.
 
 | Task type | Delegate to |
 |-----------|------------|
-| Build/test fix, quality fix, add tests, docs | Sonnet subagent (or inline if <20 lines) |
-| Feature implementation | Coordinate Sonnet subagents for file edits |
-| Architecture decision | Plan subagent first, then Sonnet for edits |
+| Any fix touching ≤2 files | Inline (no subagent — overhead isn't worth it) |
+| Fix touching 3+ files, add tests, docs | Single sonnet subagent |
+| Feature touching ≤5 files | Single sonnet subagent (no coordination layer) |
+| Feature touching 6+ files | Coordinate parallel sonnet subagents |
+| Architecture decision | Plan subagent first, then sonnet for edits |
 
 **Verification:** Re-run build + targeted tests (haiku Bash subagents, parallel). If the
 fix touched ≤3 files, run only related tests first; run full suite only if targeted tests

@@ -28,7 +28,7 @@ Autonomous development overseer for [Claude Code](https://claude.ai/code). Triag
 - **Session resume** — picks up where the last session left off
 - **Stuck detection** — defers findings after 3 failed attempts, asks for guidance
 - **Interruptible** — message at any time; it handles your request then resumes
-- **Cost optimized** — Haiku for searches/builds, Sonnet for code, Opus only for coordination
+- **Cost optimized** — Haiku for scans/builds, Sonnet only when reasoning needed, inline for small fixes
 
 ## Install
 
@@ -94,7 +94,9 @@ Guardrail items (always ask): public API changes, file deletion, auth/security c
 | Diff-scoped re-analysis | After a commit, prioritize changed files over full rescan |
 | Pattern batching | 3+ similar issues → one systematic fix, not N separate passes |
 | Adaptive learning | Auto-promotes categories you always approve, deprioritizes skipped ones |
-| Model delegation | Haiku for searches/builds, Sonnet for code, Opus for decisions |
+| Skip redundant verification | If previous cycle verified clean, don't re-run build/test |
+| Haiku-first analysis | Haiku scans everything; Sonnet only escalates for control/data flow |
+| Smart delegation | ≤2 file fixes inline, no subagent overhead; single subagent up to 5 files |
 | No subagents for small projects | Inline Grep/Glob for <20 files |
 | Git log = audit trail | No separate log file; `[overseer/cycle-N]` commits track everything |
 
