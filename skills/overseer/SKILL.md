@@ -25,6 +25,91 @@ If the user provided an argument, treat it as a focus area hint:
 
 If empty, run the full analysis across all dimensions.
 
+## Attention States & Notifications
+
+The overseer has three attention states. **Always display the current state** at the start
+of each message so the user can glance and know whether they're needed.
+
+### States
+
+| State | Indicator | Meaning |
+|-------|-----------|---------|
+| `WORKING` | `[WORKING - no input needed]` | Autonomous execution in progress. User can walk away. |
+| `PRESENTING` | `[PRESENTING - review when ready]` | Report or plan is ready for review. Non-urgent. |
+| `BLOCKED` | `[BLOCKED - input required]` | Cannot continue without a user decision. |
+
+**Rules:**
+- Enter `WORKING` at the start of Phases 0, 1, 2, 3, 3b, 5 (execution), and 6 (commit)
+- Enter `PRESENTING` at the start of Phase 4 (report) and Phase 4b (brainstorm/plan)
+- Enter `BLOCKED` only when `AskUserQuestion` is used — a real decision is needed
+- In autopilot mode, `BLOCKED` should be rare (only for guardrail items)
+
+### Notification Channels
+
+When transitioning to `BLOCKED` (or `PRESENTING` if the user configured eager notifications),
+alert the user through their configured channel. Check `.claude/overseer-state.json` for
+the `notifications` config.
+
+**Configuration** (set once at session start if not already configured):
+
+```json
+{
+  "notifications": {
+    "channel": "os|slack|webhook|none",
+    "on_blocked": true,
+    "on_presenting": false,
+    "on_cycle_complete": false,
+    "slack_webhook": "https://hooks.slack.com/services/...",
+    "webhook_url": "https://your-endpoint.com/notify",
+    "ntfy_topic": "overseer-alerts"
+  }
+}
+```
+
+**Channel implementations:**
+
+| Channel | How to notify | Setup |
+|---------|--------------|-------|
+| `os` | Terminal bell (`\a`) + system notification via `osascript` (macOS), `notify-send` (Linux), or `msg` / PowerShell toast (Windows) | Zero config, works everywhere |
+| `slack` | POST to Slack webhook URL with a short JSON message | User provides `slack_webhook` |
+| `webhook` | POST to any URL with `{"state": "BLOCKED", "message": "...", "cycle": N}` | User provides `webhook_url` |
+| `ntfy` | POST to ntfy.sh topic — free, works on mobile | User provides `ntfy_topic` |
+| `none` | No notification — user watches the terminal | Default |
+
+**OS notification commands (use in Bash):**
+```bash
+# macOS
+osascript -e 'display notification "Overseer needs input" with title "Claude Overseer"'
+
+# Linux
+notify-send "Claude Overseer" "Overseer needs input"
+
+# Windows (PowerShell)
+powershell -Command "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.MessageBox]::Show('Overseer needs input','Claude Overseer')"
+# Or simpler toast:
+powershell -Command "New-BurntToastNotification -Text 'Claude Overseer', 'Input required — check your terminal'"
+
+# ntfy (cross-platform, free, mobile push)
+curl -s -d "Overseer needs your input (Cycle N)" ntfy.sh/YOUR_TOPIC
+
+# Slack webhook
+curl -s -X POST -H 'Content-type: application/json' --data '{"text":"Overseer BLOCKED: needs input (Cycle N)"}' YOUR_SLACK_WEBHOOK
+
+# Generic webhook
+curl -s -X POST -H 'Content-type: application/json' --data '{"state":"BLOCKED","message":"...","cycle":N}' YOUR_WEBHOOK_URL
+```
+
+**First-run setup:** On the very first overseer invocation in a project, if no notification
+config exists, ask the user once:
+
+> How should I notify you when I need input?
+
+Options: "OS notification (Recommended)", "Slack webhook", "ntfy.sh (mobile push)", "No notifications — I'll watch"
+
+Save their choice to `overseer-state.json` so it persists.
+
+---
+
 ## Session State
 
 At the start of each overseer session, read `.claude/overseer-state.json` if it exists.
@@ -41,7 +126,13 @@ This file tracks findings and progress across sessions and context compactions. 
   "known_findings": ["finding-id-1", "finding-id-2"],
   "completed_this_session": ["description of work done"],
   "deferred": ["items user explicitly skipped"],
-  "files_modified": ["list of files changed this session"]
+  "files_modified": ["list of files changed this session"],
+  "notifications": {
+    "channel": "os",
+    "on_blocked": true,
+    "on_presenting": false,
+    "on_cycle_complete": false
+  }
 }
 ```
 
@@ -50,6 +141,7 @@ Update this file at the end of each cycle. This lets you:
 - Avoid re-reporting known findings the user already deferred
 - Resume after context compaction or a new session
 - Cache project detection so you don't re-detect every cycle
+- Persist notification preferences across sessions
 
 ---
 
