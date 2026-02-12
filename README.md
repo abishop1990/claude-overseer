@@ -7,27 +7,34 @@ An autonomous development overseer skill for [Claude Code](https://claude.ai/cod
 When you invoke `/overseer`, Claude enters a continuous development loop:
 
 ```
-Phase 0: Situational Awareness   — git state, dependency audit, open issues/PRs
-Phase 1: Health Check             — build, test, lint (all in parallel)
-Phase 2: Deep Analysis            — test gaps, code quality, security, perf, dead code, doc drift
-Phase 3: Roadmap Review           — parse roadmap artifacts, reason about dependencies
-Phase 3b: Functional Smoke Test   — start the server, hit routes, check responses
-Phase 4: Findings Report          — prioritized report with concrete file:line references
-Phase 5: Execute                  — implement the chosen fix/feature/improvement
-Phase 6: Checkpoint               — commit the work, loop back to Phase 0
+Phase 0:  Situational Awareness  [WORKING]     — git state, dep audit, open issues/PRs
+Phase 1:  Health Check           [WORKING]     — build, test, lint (all in parallel)
+Phase 2:  Deep Analysis          [WORKING]     — test gaps, quality, security, perf, dead code, docs
+Phase 3:  Roadmap Review         [WORKING]     — parse roadmap artifacts, reason about dependencies
+Phase 3b: Smoke Test             [WORKING]     — start server, hit routes, check responses
+Phase 4:  Findings Report        [PRESENTING]  — prioritized report with file:line references
+Phase 4b: Brainstorm & Plan      [PRESENTING]  — concrete plans with approaches, risks, alternatives
+         → user decision          [BLOCKED]     — notification sent, pick an action
+Phase 5:  Execute                [WORKING]     — implement the chosen fix/feature/improvement
+Phase 6:  Checkpoint             [WORKING]     — structured commit, iteration log, loop back
 ```
 
-Each cycle produces a prioritized report and asks what to work on next. Say **"autopilot"** and it picks the top recommendation itself.
+Each cycle produces a prioritized report, brainstorms concrete plans, and asks what to work on next. Say **"autopilot"** and it picks the top recommendation itself.
 
 ## Features
 
 - **Language agnostic** — auto-detects Rust, Node/TS, Python, Go, Java, .NET from project files
 - **CLAUDE.md aware** — respects project-specific build commands, conventions, and contracts
-- **Cost optimized** — uses Haiku for searches and builds, Sonnet for fixes, Opus only for coordination
-- **Persistent state** — tracks findings, warning trends, and session progress across context compactions
+- **Attention states** — clear `[WORKING]` / `[PRESENTING]` / `[BLOCKED]` indicators so you know when you're needed
+- **Notifications** — OS toast, Slack webhook, ntfy.sh (mobile push), or generic webhook when input is needed
+- **Brainstorming** — doesn't just list problems; proposes 2-3 concrete approaches with effort, risks, and scope variants
+- **Cost optimized** — Haiku for searches/builds, Sonnet for fixes, Opus only for coordination
+- **Persistent state** — tracks findings, warning trends, and progress across context compactions
+- **Iteration log** — `.claude/overseer-log.md` records every cycle for auditability and team visibility
+- **Structured commits** — `[overseer/cycle-N]` prefixed, machine-filterable commit history
+- **Time-boxed sessions** — "run for 15 minutes" with graceful wind-down
 - **Focus modes** — `/overseer tests`, `/overseer security`, `/overseer roadmap`, etc.
 - **Autopilot guardrails** — won't modify public APIs, delete files, or touch auth code without asking
-- **Commit checkpoints** — offers to commit after each piece of work to prevent diff accumulation
 
 ## Install
 
@@ -42,8 +49,6 @@ Each cycle produces a prioritized report and asks what to work on next. Say **"a
 ```
 
 ### As a project-local skill (single project)
-
-Copy the skill into your project:
 
 ```bash
 mkdir -p .claude/skills/overseer
@@ -83,11 +88,26 @@ curl -o ~/.claude/skills/overseer/SKILL.md \
 | Pick from the report | Work on the selected item |
 | "next cycle" | Re-analyze without executing anything |
 | "auto" / "autopilot" | Let it pick and execute the top recommendation |
+| "brainstorm more" | Generate different options for the current finding |
 | "stop" / "exit" | End with a session summary |
+
+### Notifications
+
+On first run, the overseer asks how you'd like to be notified when it needs input:
+
+| Channel | How it works | Setup |
+|---------|-------------|-------|
+| **OS** (default) | System toast notification + terminal bell | Zero config |
+| **Slack** | Posts to a Slack channel via webhook | Provide webhook URL |
+| **ntfy** | Push notification to your phone via [ntfy.sh](https://ntfy.sh) | Provide topic name |
+| **Webhook** | POST JSON to any URL | Provide endpoint |
+| **None** | No notification — watch the terminal | — |
+
+Preferences are saved to `.claude/overseer-state.json` and persist across sessions.
 
 ## How it saves you money
 
-The overseer is designed for long-running sessions. Without optimization, it would burn expensive Opus tokens on work that smaller models handle fine. The cost strategy:
+The overseer is designed for long-running sessions. Without optimization, it would burn expensive Opus tokens on work that smaller models handle fine:
 
 | Work | Model | Why |
 |------|-------|-----|
@@ -100,14 +120,17 @@ The overseer is designed for long-running sessions. Without optimization, it wou
 
 A typical analysis-only cycle costs ~3-5 Opus messages + 8-12 Haiku subagent calls.
 
-## Session persistence
+## Artifacts
 
-The overseer writes `.claude/overseer-state.json` after each cycle. This file:
+The overseer creates these files in your project's `.claude/` directory:
 
-- Tracks warning count trends across cycles ("SSR warnings: 12 -> 8")
-- Remembers findings you deferred (won't re-report them)
-- Caches project detection (skips re-detection on subsequent cycles)
-- Preserves session progress through context compaction
+| File | Purpose |
+|------|---------|
+| `overseer-state.json` | Session state, warning baselines, notification config |
+| `overseer-log.md` | Human-readable history of every cycle and action taken |
+| `overseer-plan-cycle-N.md` | Detailed plan for cycle N (approaches, risks, files) |
+
+Add these to `.gitignore` if you don't want them tracked, or commit them for team visibility.
 
 ## Autopilot guardrails
 

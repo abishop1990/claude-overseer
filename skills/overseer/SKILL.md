@@ -152,7 +152,7 @@ if they want to continue to another cycle or stop.
 
 ---
 
-### Phase 0: Project Detection & Situational Awareness
+### Phase 0: Project Detection & Situational Awareness `[WORKING]`
 
 #### 0a. Detect Project Stack
 
@@ -203,7 +203,7 @@ This provides external context that pure code analysis misses.
 
 ---
 
-### Phase 1: Health Check
+### Phase 1: Health Check `[WORKING]`
 
 Run the detected build and test commands **in parallel**:
 
@@ -230,7 +230,7 @@ Phase 5 with the fix as the recommended action.
 
 ---
 
-### Phase 2: Deep Analysis
+### Phase 2: Deep Analysis `[WORKING]`
 
 Run these analyses **in parallel** using Explore/search agents. Adapt patterns to the
 detected language.
@@ -287,7 +287,7 @@ detected language.
 
 ---
 
-### Phase 3: Roadmap & Planning Review
+### Phase 3: Roadmap & Planning Review `[WORKING]`
 
 Look for project planning artifacts in this priority order:
 
@@ -316,7 +316,7 @@ Cross-reference with the codebase:
 
 ---
 
-### Phase 3b: Functional Smoke Test (optional, when no critical issues found)
+### Phase 3b: Functional Smoke Test `[WORKING]` (optional)
 
 If Phases 1-3 found no compilation errors or test failures, attempt a functional check:
 
@@ -340,7 +340,7 @@ If the smoke test hangs or fails to start, note it and move on — never block t
 
 ---
 
-### Phase 4: Findings Report
+### Phase 4: Findings Report `[PRESENTING]`
 
 Present a prioritized report to the user:
 
