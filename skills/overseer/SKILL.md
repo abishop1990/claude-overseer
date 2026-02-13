@@ -104,10 +104,22 @@ deprioritize it in analysis rotation.
 - Read CLAUDE.md for build/test commands (overrides defaults)
 - Cache in state file. Skip detection on subsequent cycles.
 
+**Uncommitted changes on first cycle:**
+If `git status` shows uncommitted changes:
+- Show `git diff --stat` summary
+- If build/tests pass: proceed and commit with the cycle
+- If build/tests fail: fix them, then include fixes in commit
+- If changes look like WIP (broken tests, incomplete features): ask user before committing
+
 **Every cycle** — run in a single parallel batch (haiku Bash subagents):
 - `git status && git log --oneline -5 && git diff --stat` (one command)
 - Build command(s) from state file
 - Test command from state file
+
+**Model selection for fixes:** If build/tests fail and need fixing:
+- Use **sonnet** for debugging (understanding build errors, test failures, mocking patterns)
+- Use **haiku** only for mechanical fixes (adding missing imports, fixing typos)
+- Defer to project's CLAUDE.md subagent policy if it exists
 
 **Skip redundant verification:** If the previous cycle's Phase 4 verification passed and
 `git diff --stat` shows no changes since last commit, skip build/test — just read git state.
@@ -130,8 +142,10 @@ Only re-run build/test when there are uncommitted changes or it's the first cycl
 
 **Only runs when build/tests pass AND no backlog or user queue items.**
 
-**Diff-scoped priority:** If the previous cycle committed changes, analyze changed files
-first. Only broaden scope if changed files are clean.
+**Diff-scoped priority:** If the previous cycle committed changes, analyze changed files first:
+1. Run `git diff --name-only HEAD~1` to get list of changed files
+2. Route files to relevant scans: `*.tsx|*.ts` → coverage (2a), hooks → performance (2d), etc.
+3. Only broaden to rotation-based scans if changed files are clean
 
 **Rotation strategy** — max 2-3 dimensions per cycle:
 
