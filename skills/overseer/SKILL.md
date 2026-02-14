@@ -48,9 +48,9 @@ These override all other instructions when in conflict:
 6. **Git log IS the iteration log** — `[overseer/cycle-N]` commits are the audit trail
 7. **One plan file** — `.claude/overseer-plan.md`, overwritten each cycle
 8. **Don't brainstorm the obvious** — only brainstorm genuinely ambiguous items
-9. **Diff-scoped re-analysis** — after a commit, prioritize analysis on changed files
+9. **Diff-scoped re-analysis** — analyze changed files before broadening to rotation
 10. **Batch similar issues** — 3+ instances of the same pattern = one systematic finding, not N
-11. **Targeted test runs** — if the fix touched ≤3 files and the framework supports it (`pytest -k`, `cargo test module::`, `jest --testPathPattern`), run related tests first. Full suite only as final verification.
+11. **Targeted test runs** — if the fix touched ≤3 files, run only related tests first. Full suite as final verification only.
 12. **Negative cache** — if a dimension found zero issues and no relevant files changed since, skip it for 2 rotation cycles
 13. **Message economy** — `[WORKING]` messages: ≤3 lines. State the result, not the process. Save detail for `[PRESENTING]`.
 14. **Subagent isolation** — all Phase 2 scans run in subagents. Never dump raw scan output into the main conversation context.
@@ -104,22 +104,13 @@ deprioritize it in analysis rotation.
 - Read CLAUDE.md for build/test commands (overrides defaults)
 - Cache in state file. Skip detection on subsequent cycles.
 
-**Uncommitted changes on first cycle:**
-If `git status` shows uncommitted changes:
-- Show `git diff --stat` summary
-- If build/tests pass: proceed and commit with the cycle
-- If build/tests fail: fix them, then include fixes in commit
-- If changes look like WIP (broken tests, incomplete features): ask user before committing
+**Uncommitted changes on first cycle:** If `git status` shows WIP (broken tests, incomplete
+features), ask user before committing. Otherwise proceed normally.
 
 **Every cycle** — run in a single parallel batch (haiku Bash subagents):
 - `git status && git log --oneline -5 && git diff --stat` (one command)
 - Build command(s) from state file
 - Test command from state file
-
-**Model selection for fixes:** If build/tests fail and need fixing:
-- Use **sonnet** for debugging (understanding build errors, test failures, mocking patterns)
-- Use **haiku** only for mechanical fixes (adding missing imports, fixing typos)
-- Defer to project's CLAUDE.md subagent policy if it exists
 
 **Skip redundant verification:** If the previous cycle's Phase 4 verification passed and
 `git diff --stat` shows no changes since last commit, skip build/test — just read git state.
@@ -142,20 +133,16 @@ Only re-run build/test when there are uncommitted changes or it's the first cycl
 
 **Only runs when build/tests pass AND no backlog or user queue items.**
 
-**Diff-scoped priority:** If the previous cycle committed changes, analyze changed files first:
-1. Run `git diff --name-only HEAD~1` to get list of changed files
-2. Route files to relevant scans: `*.tsx|*.ts` → coverage (2a), hooks → performance (2d), etc.
-3. Only broaden to rotation-based scans if changed files are clean
+**Dimension selection** — max 2-3 per cycle, pick by priority:
 
-**Rotation strategy** — max 2-3 dimensions per cycle:
-
-1. **Code changed since last scan** → scans relevant to what changed:
-   - Server code → security (2c) + quality (2b)
+1. **Files changed since last scan** (`git diff --name-only HEAD~1`) → route to relevant scans:
+   - Server/app code → security (2c) + quality (2b)
    - Tests → test coverage (2a)
    - Deps → dep audit
    - Docs → doc drift (2f)
+   - If changed files are clean, fall through to rotation.
 
-2. **No code changed (fresh session)** → rotate by cycle number:
+2. **No recent changes (fresh session)** → rotate by cycle number:
    - N mod 4 == 0: quality (2b) + security (2c)
    - N mod 4 == 1: test coverage (2a) + performance (2d)
    - N mod 4 == 2: roadmap review + dead code (2e)
@@ -224,6 +211,10 @@ resume the existing plan at the next uncompleted step.
 | Feature touching ≤5 files | Single sonnet subagent (no coordination layer) |
 | Feature touching 6+ files | Coordinate parallel sonnet subagents |
 | Architecture decision | Plan subagent first, then sonnet for edits |
+
+**Model selection:** Use sonnet for debugging (build errors, test failures, mocking). Use
+haiku only for mechanical fixes (missing imports, typos). Defer to CLAUDE.md if it specifies
+a subagent policy.
 
 **Verification:** Re-run build + targeted tests (haiku Bash subagents, parallel). If the
 fix touched ≤3 files, run only related tests first; run full suite only if targeted tests
