@@ -161,6 +161,18 @@ Only re-run build/test when there are uncommitted changes or it's the first cycl
 - Identify next incomplete item (respect dependency order)
 - Cross-reference with `TODO`/`FIXME` for partial implementations
 
+**Opportunity scan** (when triggered by `/overseer suggest` or diminishing returns):
+Analyze the codebase for new work the user might want to start. Look for:
+- Missing capabilities that similar projects typically have (caching, rate limiting, CLI,
+  monitoring, pagination, search, auth improvements)
+- Performance opportunities (indexing, lazy loading, connection pooling, build optimization)
+- DX improvements (better error messages, dev tooling, test helpers, scripts)
+- Architecture wins (extract shared code, add middleware, improve type safety)
+
+Present 3-5 concrete, actionable suggestions as `[PRESENTING]` with `AskUserQuestion`.
+Each suggestion: one sentence summary + why it matters. Let the user pick one to start,
+queue several, or dismiss all. Tag accepted suggestions as `[USER]` queue items.
+
 **Pattern detection:** If 3+ instances of the same issue appear (e.g., 4 functions >80 lines),
 create ONE systematic finding instead of N separate ones.
 
@@ -245,8 +257,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 record category approval in `patterns`.
 
 **Diminishing returns:** If the last 3 consecutive cycles all produced only medium or low
-severity findings, enter `[PRESENTING]` before looping: "Codebase is in good shape. Continue
-grinding?" / "Switch to feature work" / "Stop". Don't grind forever on diminishing returns.
+severity findings, run the **opportunity scan** from Phase 2 and present suggestions:
+"Codebase is in good shape. Here are some ideas for new work:" followed by 3-5 suggestions.
+`AskUserQuestion`: pick a suggestion / "keep grinding" / "stop".
 
 **Then immediately begin Phase 1 of the next cycle.** Do not stop, do not wait for user
 input, do not end your response. Continue executing until a stop condition is met.
@@ -361,4 +374,5 @@ OS toast, Slack webhook, ntfy.sh, or none. Save to state. On `[BLOCKED]`, fire v
 | `quality` | Quality (2b) + dead code (2e) + doc drift (2f) |
 | `deps` | Dependency audit only |
 | `smoke` | Start server, hit routes, check responses |
+| `suggest` | Opportunity scan — suggest new features, optimizations, and improvements |
 | (empty) | Full triage across all dimensions |

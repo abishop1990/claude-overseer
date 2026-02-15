@@ -64,6 +64,7 @@ curl -o ~/.claude/skills/overseer/SKILL.md \
 /overseer quality      # Code quality + dead code + doc drift
 /overseer deps         # Dependency audit
 /overseer smoke        # Functional smoke test
+/overseer suggest      # "What should we build next?"
 ```
 
 During a session:
