@@ -52,7 +52,7 @@ These override all other instructions when in conflict:
 10. **Batch similar issues** — 3+ instances of the same pattern = one systematic finding, not N
 11. **Targeted test runs** — if the fix touched ≤3 files, run only related tests first. Full suite as final verification only.
 12. **Negative cache** — if a dimension found zero issues and no relevant files changed since, skip it for 2 rotation cycles
-13. **Message economy** — `[WORKING]` messages: ≤3 lines. State the result, not the process. Save detail for `[PRESENTING]`.
+13. **Structured progress** — Every `[WORKING]` message must open with a phase header and close with a result line. Format: `→ [Phase N — Label] action...` then `← result`. Engineers should be able to skim the conversation and understand exactly what happened at each step. Save deliberation and tradeoff discussion for `[PRESENTING]`.
 14. **Subagent isolation** — all Phase 2 scans run in subagents. Never dump raw scan output into the main conversation context.
 15. **Grep tool for scanning** — always use the Grep tool (one pattern per call) for code analysis. Never construct multi-line bash commands for searching. Bash is only for build/test/git commands.
 
@@ -306,11 +306,36 @@ Long sessions degrade without active context management:
 
 - **Subagent-first:** All analysis (Phase 2), all code execution (Phase 4), and all
   build/test runs use subagents. The main conversation only sees decisions and summaries.
-- **No narration:** Don't explain what you're about to do. Do it, report the result.
+- **Structured narration:** Open each phase with one line saying what you're doing, close it with one line saying what you found. Use `→` for actions and `←` for results. This lets engineers follow execution without requiring them to infer state from subagent output.
 - **State file is memory:** Anything worth remembering across cycles goes in
   `overseer-state.json`, not in conversation history. Re-read state at cycle start.
 - **File contents stay in subagents:** When a subagent reads files for analysis or edits,
   the main conversation receives only the finding summary or confirmation, never raw file contents.
+
+## Run Log
+
+Append to `.claude/overseer-run.log` at each phase transition. Engineers can `tail -f` this file to follow execution in real time. Format — one block per phase:
+
+```
+[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 1 — Triage
+→ git status + build (cargo check) + tests (cargo test)
+← Build: PASS | Tests: 52/52 | Warnings: 3 | Decision: Proceeding to Phase 2
+
+[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 2 — Analyze
+→ Dimensions: 2b (quality), 2c (security) | Files changed: src/auth.rs, src/api.rs
+← Findings: 2 (1 high, 1 medium)
+   f1 HIGH  auth.rs:42 — unwrap() on user input will panic
+   f2 MED   api.rs:108 — debug log contains sensitive token
+
+[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 4 — Execute
+→ Fixing f1 (HIGH, auto-executing) | Files: src/auth.rs
+← Build: PASS | Tests: 52/52 | Result: Fixed
+
+[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 5 — Commit
+← abc1234 [overseer/cycle-N] Fix unwrap() panic in auth handler
+```
+
+Use `date "+%Y-%m-%d %H:%M:%S"` via Bash to get the timestamp. Append with `>>`, never overwrite.
 
 ## Session State
 
@@ -344,9 +369,23 @@ Read `.claude/overseer-state.json` at session start. Write after each cycle.
 ## Attention States
 
 Display at the start of every message:
-- `[WORKING]` — Autonomous. User can walk away.
+- `[WORKING]` — Autonomous. User can walk away. Each message must follow the structured progress format (rule 13): open with `→ [Phase N — Label] what's running`, close with `← result`.
 - `[PRESENTING]` — Report or plan ready for review.
 - `[BLOCKED]` — Cannot continue without user input. Send notification.
+
+**Example `[WORKING]` message:**
+```
+[WORKING]
+
+→ [Phase 1 — Triage] Running git state + build + tests in parallel...
+← Build: PASS | Tests: 47/47 | Warnings: 2 | No backlog items
+→ [Phase 2 — Analyze] Scanning 2b (quality) + 2c (security) on changed files: src/api.rs, src/models.rs...
+← Found 1 finding: HIGH src/api.rs:88 — SQL query built with string interpolation
+→ [Phase 4 — Execute] Fixing HIGH finding (auto-executing, Balanced tier)...
+← Parameterized query applied | Build: PASS | Tests: 47/47
+→ [Phase 5 — Commit] Committing...
+← d3f1a9c [overseer/cycle-7] Fix SQL injection risk in query builder
+```
 
 ## Notifications
 
