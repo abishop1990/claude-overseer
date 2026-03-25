@@ -195,7 +195,9 @@ This is a functional test, not a code scan.
 - Cross-reference with `TODO`/`FIXME` for partial implementations
 
 **Opportunity scan** (when triggered by `/overseer suggest` or diminishing returns):
-Analyze the codebase for new work using the knowledge base as foundation. Look for:
+First, run `/engineering:tech-debt` via the Skill tool if available — it provides built-in
+categorization and prioritization of tech debt. Then analyze the codebase for new work
+using the knowledge base as foundation. Look for:
 - Missing capabilities that similar projects typically have (caching, rate limiting, CLI,
   monitoring, pagination, search, auth improvements)
 - Performance opportunities (indexing, lazy loading, connection pooling, build optimization)
@@ -212,10 +214,19 @@ queue several, or dismiss all. Tag accepted suggestions as `[USER]` queue items.
 **Pattern detection:** If 3+ instances of the same issue appear (e.g., 4 functions >80 lines),
 create ONE systematic finding instead of N separate ones.
 
-**Delegation:** Spawn Explore subagents per dimension in parallel — haiku for all initial
-scans. If haiku flags something that requires reasoning about control flow or data flow
-(e.g., auth logic, race conditions, complex state), escalate that specific finding to a
-sonnet subagent for deeper analysis. Small projects (<20 files): inline Grep/Glob only.
+**Delegation:** Use built-in subagent types for analysis:
+
+| Task | Subagent type | Why |
+|------|---------------|-----|
+| Codebase scanning (all dimensions) | `feature-dev:code-explorer` | Runs on Haiku, read-only, designed for tracing execution paths and mapping architecture |
+| Deep analysis of flagged findings | `feature-dev:code-reviewer` | Confidence-based filtering, catches real issues not pattern noise |
+| Architecture assessment | `feature-dev:code-architect` | Designs implementations from existing patterns, good for feature planning |
+| Tech debt audit (when in rotation) | Invoke `/engineering:tech-debt` via Skill tool | Built-in categorization and prioritization |
+
+Spawn `feature-dev:code-explorer` subagents per dimension in parallel — they run on Haiku
+(fast and cheap). If a finding requires reasoning about control flow or data flow (e.g.,
+auth logic, race conditions, complex state), escalate to `feature-dev:code-reviewer` for
+deeper confidence-based analysis. Small projects (<20 files): inline Grep/Glob only.
 
 **Output:** 1-5 ranked findings in `open_findings`. Each has: id, phase, summary, severity
 (critical/high/medium/low), confidence (high/medium/low), suggested action. Update the
@@ -239,6 +250,9 @@ Check `.claude/overseer-plan.md` — if the current item continues an in-progres
 resume the existing plan at the next uncompleted step.
 
 **For features and ambiguous items:**
+- Spawn a `feature-dev:code-architect` subagent to design the implementation — it analyzes
+  existing codebase patterns and provides blueprints with specific files to create/modify,
+  component designs, data flows, and build sequences
 - 2-3 approaches with tradeoffs (only when genuinely different)
 - MVP vs full scope
 - Write to `.claude/overseer-plan.md` (overwritten each cycle, unless continuing a multi-step plan)
@@ -281,9 +295,21 @@ working on a feature branch directly: `git checkout -b overseer/cycle-N-<desc>`.
 | Feature touching 6+ files | Coordinate parallel sonnet subagents |
 | Architecture decision | Plan subagent first, then sonnet for edits |
 
-**Model selection:** Use sonnet for debugging (build errors, test failures, mocking). Use
-haiku only for mechanical fixes (missing imports, typos). Defer to CLAUDE.md if it specifies
-a subagent policy.
+**Model selection and subagent types:**
+
+| Task | Subagent type | Model | Cost |
+|------|---------------|-------|------|
+| Codebase exploration | `feature-dev:code-explorer` | Haiku | Low |
+| Code review | `feature-dev:code-reviewer` | Inherits | Low-Med |
+| Deep security review | `coderabbit:code-reviewer` | Inherits | Med |
+| Architecture design | `feature-dev:code-architect` | Inherits | Med |
+| Quality pass | `code-simplifier:code-simplifier` | Sonnet | Med |
+| Mechanical fix (imports, typos) | Inline or haiku general-purpose | Haiku | Low |
+| Debugging (build errors, test failures) | Sonnet general-purpose | Sonnet | Med |
+| Complex feature implementation | Sonnet general-purpose | Sonnet | Med-High |
+
+Prefer specialized subagent types over general-purpose — they have optimized prompts and
+tool restrictions. Defer to CLAUDE.md if it specifies a subagent policy.
 
 **Verification:** Re-run build + targeted tests (haiku Bash subagents, parallel). If the
 fix touched ≤3 files, run only related tests first; run full suite only if targeted tests
@@ -320,21 +346,40 @@ resolution, mark it deferred, enter `[BLOCKED]`, and ask the user for guidance.
    ```
 
 **Code review — mandatory subagent review:**
-After creating the PR, spawn a **separate sonnet code-reviewer subagent** to review the
-changes. This subagent is independent from the one that wrote the code.
+After creating the PR, spawn a **separate code-reviewer subagent** to review the changes.
+This subagent is independent from the one that wrote the code.
 
+**Reviewer selection by change type:**
+
+| Change type | Reviewer | Why |
+|-------------|----------|-----|
+| Standard fix/feature | `feature-dev:code-reviewer` | Confidence-based filtering, reports only high-priority issues, read-only tools, cost-efficient |
+| Security-sensitive change | `coderabbit:code-reviewer` | Deeper analysis, all tools available, thorough security review |
+| Architecture/API change | `feature-dev:code-reviewer` + escalate unresolved to `coderabbit:code-reviewer` | Two-pass review for critical changes |
+
+**Review prompt** (pass to the reviewer subagent):
 ```
-Review subagent instructions:
-- Read the PR diff (git diff main...<branch>)
-- Review for: correctness, security, performance, style consistency, test coverage
-- Check that the change matches the stated intent
-- Look for: edge cases, error handling gaps, unintended side effects
-- Rate: APPROVE, REQUEST_CHANGES, or COMMENT
-- If REQUEST_CHANGES: list specific, actionable concerns with file:line references
+Review this PR diff for the overseer autonomous development loop.
+
+Context: [one-sentence description of what was changed and why]
+
+Review the diff (git diff main...<branch>) for:
+- Correctness: does the change do what it claims?
+- Security: injection risks, unvalidated input, secret exposure
+- Edge cases: error handling gaps, nil/null paths, boundary conditions
+- Side effects: unintended changes to behavior elsewhere
+- Test coverage: are the changes adequately tested?
+- Style: does it match project conventions?
+
+Rate: APPROVE, REQUEST_CHANGES, or COMMENT
+If REQUEST_CHANGES: list specific, actionable concerns with file:line references.
+Try hard to find real problems — don't rubber-stamp.
 ```
 
-Use `subagent_type: "feature-dev:code-reviewer"` or `subagent_type: "coderabbit:code-reviewer"`
-if available. Otherwise spawn a general-purpose sonnet subagent with the review prompt above.
+`feature-dev:code-reviewer` is preferred because it uses confidence-based filtering
+(only reports issues it's confident about) and has read-only tools, making it fast and
+cheap. Fall back to `coderabbit:code-reviewer` for deeper analysis or if feature-dev
+is unavailable. Last resort: general-purpose sonnet subagent with the review prompt above.
 
 **Fix review concerns:**
 If the reviewer returns `REQUEST_CHANGES`:
@@ -452,11 +497,12 @@ and sessions, eliminating redundant scanning and surviving context window compre
   contradicts stored knowledge, re-analyze that component.
 
 **First-cycle knowledge bootstrap:**
-On the very first run (no knowledge base exists), spawn a sonnet Explore subagent to:
+On the very first run (no knowledge base exists), spawn a `feature-dev:code-explorer`
+subagent (runs on Haiku — fast and cheap, designed for exactly this task). It will:
 1. Map the directory structure and identify major components
-2. Read entry points and trace the main execution flow
-3. Identify the testing strategy and conventions
-4. Note architecture patterns and design decisions
+2. Trace execution paths and map architecture layers
+3. Document patterns, abstractions, and dependencies
+4. Identify the testing strategy and conventions
 5. Record everything in the knowledge base
 
 This takes ~2-3 minutes but saves significant time across all future cycles.
@@ -641,7 +687,7 @@ OS toast, Slack webhook, ntfy.sh, or none. Save to state. On `[BLOCKED]`, fire v
 | `deps` | Dependency audit only |
 | `smoke` | Start server, hit routes, check responses |
 | `suggest` | Opportunity scan — suggest new features, optimizations, and improvements |
-| `stabilize` | Fix all build warnings, failing tests, and flaky tests — zero tolerance |
+| `stabilize` | Fix all build warnings, failing tests, and flaky tests — zero tolerance. Also runs `code-simplifier:code-simplifier` subagent on recently changed files for quality passes. |
 | (empty) | Full triage across all dimensions |
 
 ## Worktree Troubleshooting
