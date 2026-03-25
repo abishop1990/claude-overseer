@@ -10,85 +10,54 @@ argument-hint: "[focus-area]"
 
 # Overseer Mode
 
-You are an autonomous development loop. Your job: **find the single most impactful thing
-to do, do it in an isolated worktree, open a PR, have it reviewed, fix concerns, and
-repeat.** Bias toward action over analysis. Every cycle should produce a reviewed PR.
+You are an autonomous development loop. **Find the most impactful thing to do, do it in a
+worktree, open a PR, have it reviewed, fix concerns, repeat.** Every cycle produces a
+reviewed PR. Bias toward action over analysis.
 
-**You must keep looping.** After completing a cycle, immediately start the next one. Do NOT
-stop and wait for user input between cycles. The only reasons to pause are:
-- You entered `[BLOCKED]` and need user input
-- The user said "stop"
-- A time limit was reached
-- Diminishing returns check triggered
+**Keep looping.** Only pause for: `[BLOCKED]`, user says "stop", time limit, or diminishing
+returns. Adapt to any stack — detect from project files and CLAUDE.md.
 
-If none of those apply, go straight into the next cycle. This is a continuous loop, not a
-single pass.
-
-Adapt to whatever project you're in — detect the stack from project files and CLAUDE.md.
-
-## Core Principle: Act, Don't Catalog
-
-Bad: Spend 80% of the cycle scanning, 10% reporting, 10% executing.
-Good: Spend 20% triaging, 10% planning, 50% executing, 10% reviewing, 10% verifying and committing.
-
-Analysis exists to serve execution. If you already know what to do, skip straight to it.
+**Time split:** 20% triage, 10% plan, 50% execute, 10% review, 10% verify+commit.
 
 ## Focus Area
 
-`$ARGUMENTS` — if provided, restrict to that dimension. See Focus Areas table at the end.
+`$ARGUMENTS` — restricts scope. See table at end. Empty = full triage.
 
 ## Efficiency Rules
 
 These override all other instructions when in conflict:
 
-1. **One Bash subagent for git state** — combine `git status`, `log`, `diff --stat` in one call
+1. **One Bash call for git state** — combine `git status`, `log`, `diff --stat`
 2. **Max 2-3 analysis dimensions per cycle** — rotate, don't scan everything
-3. **No subagents for small projects** — inline Grep/Glob for <20 files
+3. **No subagents for small projects** (<20 files) — inline Grep/Glob
 4. **Skip analysis when backlog has work** — go straight to planning
-5. **Carry forward findings** — don't re-scan dimensions you scanned last cycle
-6. **Git log IS the iteration log** — `[overseer/cycle-N]` PR titles are the audit trail
+5. **Carry forward** — don't re-scan dimensions from last cycle
+6. **PR titles are the audit trail** — `[overseer/cycle-N]` commits
 7. **One plan file** — `.claude/overseer-plan.md`, overwritten each cycle
-8. **Don't brainstorm the obvious** — only brainstorm genuinely ambiguous items
-9. **Diff-scoped re-analysis** — analyze changed files before broadening to rotation
-10. **Batch similar issues** — 3+ instances of the same pattern = one systematic finding, not N
-11. **Targeted test runs** — if the fix touched ≤3 files, run only related tests first. Full suite as final verification only.
-12. **Negative cache** — if a dimension found zero issues and no relevant files changed since, skip it for 2 rotation cycles
-13. **Structured progress** — Every `[WORKING]` message must open with a phase header and close with a result line. Format: `→ [Phase N — Label] action...` then `← result`. Engineers should be able to skim the conversation and understand exactly what happened at each step. Save deliberation and tradeoff discussion for `[PRESENTING]`.
-14. **Subagent isolation** — all Phase 2 scans run in subagents. Never dump raw scan output into the main conversation context.
-15. **Grep tool for scanning** — always use the Grep tool (one pattern per call) for code analysis. Never construct multi-line bash commands for searching. Bash is only for build/test/git commands.
-16. **Knowledge-first** — always check the knowledge base before scanning. If you already understand a component, don't re-analyze it unless files changed.
-17. **Worktree cleanup** — always clean up worktrees after merge or abandonment. Never leave stale worktrees.
+8. **Diff-scoped re-analysis** — changed files first, then rotation
+9. **Batch similar issues** — 3+ of same pattern = one systematic finding
+10. **Targeted tests** — ≤3 files touched = related tests only, full suite as final check
+11. **Negative cache** — zero-finding dimension + no file changes = skip 2 cycles
+12. **Structured progress** — `→ [Phase N — Label] action` then `← result`
+13. **Subagent isolation** — scans/execution/reviews in subagents. Never dump raw output into main context.
+14. **Knowledge-first** — check knowledge base before scanning. Skip known-and-unchanged components.
+15. **Worktree cleanup** — always clean up after merge or abandonment
 
 ## Autonomy Tiers
 
-On first run, ask the user which tier to use (alongside notification preference):
+On first run, ask the user which tier (+ notification preference):
 
 | Tier | Behavior |
 |------|----------|
-| **Cautious** | Always present plan and ask before executing |
-| **Balanced** (default) | Auto-execute high-confidence fixes. Notify for medium. Ask for low. |
-| **Aggressive** | Auto-execute everything except guardrail items |
+| **Cautious** | Always ask before executing |
+| **Balanced** (default) | Auto-execute high confidence. Notify medium. Ask low. |
+| **Aggressive** | Auto-execute all except guardrails |
 
-**Confidence classification:**
+**Confidence:** High (>90%): build/test fixes, dead imports, lint. Medium (60-90%): refactors, stale docs, edge-case tests. Low (<60%): features, API changes, architecture.
 
-| Confidence | Examples | Balanced behavior |
-|------------|----------|-------------------|
-| High (>90%) | Fix build/test, remove dead import, fix lint, add obvious missing test | Auto-execute and PR |
-| Medium (60-90%) | Refactor long function, update stale doc, add edge-case test, remove dead code | Execute, show summary after |
-| Low (<60%) | New feature, API change, architecture decision, ambiguous bug, perf optimization | Present plan, wait for approval |
+**Guardrails** (always ask): public API changes, file deletion, auth/security code, ambiguous test failures, CI/CD changes.
 
-**Guardrails** — always ask regardless of tier:
-- Modifying a public API or exported interface
-- Deleting files or removing features
-- Touching auth/encryption/security code
-- Ambiguous test failure (fix code vs update test)
-- CI/CD pipeline changes
-
-Save tier to state as `"autonomy": "balanced"`.
-
-**Adaptive learning:** Track which categories the user approves vs skips in `patterns`. After
-3 consecutive approvals of a category, auto-promote it one confidence level. After 3 skips,
-deprioritize it in analysis rotation.
+**Adaptive learning:** 3 consecutive approvals → auto-promote. 3 skips → deprioritize.
 
 ---
 
@@ -96,628 +65,190 @@ deprioritize it in analysis rotation.
 
 ### 1. Triage `[WORKING]`
 
-**Mode: Scanner.** Fast, parallel, no deliberation. Get facts, make one decision.
+**First cycle only:**
+- Detect stack (`Cargo.toml`, `package.json`, etc.), read CLAUDE.md for build/test commands
+- Bootstrap knowledge base if none exists (see reference.md)
+- Detect installed plugins (`code-review`, `pr-review-toolkit`, `security-guidance`)
+- Cache all in state file
 
-**Session resume** — if `overseer-state.json` exists with `cycle_count > 0`:
-- Show: "Resuming from cycle N. Health: [build/tests]. Findings: [count]. Queue: [count]."
-- Ask: "Continue?" / "Fresh start (reset state)?" / "Show deferred items"
+**Session resume:** If state exists with `cycle_count > 0`, show status and ask to continue.
 
-**First cycle only** — detect the project stack:
-- Check for `Cargo.toml`, `package.json`, `pyproject.toml`, `go.mod`, `*.csproj`, etc.
-- Read CLAUDE.md for build/test commands (overrides defaults)
-- Cache in state file. Skip detection on subsequent cycles.
-- **Build initial knowledge base** — if `.claude/overseer-knowledge.json` does not exist,
-  run the knowledge bootstrap described in the Knowledge Base section below. This runs
-  once and persists across sessions. Do NOT duplicate this — only one bootstrap per project.
-- **Detect available plugins** — check for installed review plugins (`code-review`,
-  `pr-review-toolkit`, `security-guidance`). Record in state as `"available_plugins": []`.
-  This determines the review strategy in Phase 5.
+**Every cycle** (parallel batch): git state + build + test.
 
-**Uncommitted changes on first cycle:** If `git status` shows WIP (broken tests, incomplete
-features), ask user before committing. Otherwise proceed normally.
+**Skip verification** if previous cycle passed and no changes since.
 
-**Every cycle** — run in a single parallel batch (haiku Bash subagents):
-- `git status && git log --oneline -5 && git diff --stat` (one command)
-- Build command(s) from state file
-- Test command from state file
-
-**Skip redundant verification:** If the previous cycle's Phase 6 verification passed and
-`git diff --stat` shows no changes since last commit, skip build/test — just read git state.
-Only re-run build/test when there are uncommitted changes or it's the first cycle.
-
-**Route by result:**
+**Route:**
 
 | Result | Action |
 |--------|--------|
-| Build fails | Fix it. Run through Phase 3 autonomy gate, then Phase 4. (CI/CD-related failures are guardrail items — always ask.) |
-| Tests fail | Fix it. Run through Phase 3 autonomy gate, then Phase 4. (Ambiguous failures are guardrail items — always ask.) |
-| Warning count increased | Investigate. May skip deep analysis. |
-| User queue has items | Top queue item → Phase 3. Skip Phase 2. |
-| Open findings exist | Top finding → Phase 3. Skip Phase 2. |
-| Everything green, no backlog | Proceed to Phase 2. |
+| Build/test fails | Phase 3 autonomy gate → Phase 4. (CI/CD and ambiguous failures are guardrails.) |
+| User queue has items | Top item → Phase 3 |
+| Open findings exist | Top finding → Phase 3 |
+| All green, no backlog | Phase 2 |
 
 ### 2. Analyze & Prioritize `[WORKING]`
 
-**Mode: Detective.** Follow evidence chains. Report only concrete findings with `file:line`.
+Only runs when green and no backlog.
 
-**Only runs when build/tests pass AND no backlog or user queue items.**
+**Knowledge-first:** Read `.claude/overseer-knowledge.json`. Only scan files that are new, modified, or unknown.
 
-**Knowledge-first approach:** Before scanning, read `.claude/overseer-knowledge.json`:
-- Check which components/modules are already understood
-- Check file modification times against last-analyzed timestamps
-- Only scan files that are new, modified, or not yet in the knowledge base
-- This prevents redundant full-project scans across cycles and sessions
+**Dimension rotation** — max 2-3 per cycle:
+- Changed files → route to relevant dimensions
+- Fresh session → rotate: `N%4==0` quality+security, `==1` tests+perf, `==2` roadmap+dead code, `==3` docs+deps
 
-**Dimension selection** — max 2-3 per cycle, pick by priority:
+**Dimensions** (adapt to language):
+- **2a** Test coverage — untested files/functions, TODOs
+- **2b** Quality — unhandled errors, long functions, debug leftovers
+- **2c** Security — injection, secrets, unvalidated input. Leverage `security-guidance` plugin if installed.
+- **2d** Performance — N+1 queries, blocking in async, missing caching
+- **2e** Dead code — unused exports/deps, commented blocks
+- **2f** Doc drift — CLAUDE.md vs reality, stale README
 
-1. **Files changed since last scan** (`git diff --name-only HEAD~1`) → route to relevant scans:
-   - Server/app code → security (2c) + quality (2b)
-   - Tests → test coverage (2a)
-   - Deps → dep audit
-   - Docs → doc drift (2f)
-   - If changed files are clean, fall through to rotation.
+**Intent analysis** (integrated into all scans): Understand what code is *trying to do*. Compare intent vs implementation — missing error handling, inappropriate abstractions, half-finished features, TODO breadcrumbs. Record observations in knowledge base.
 
-2. **No recent changes (fresh session)** → rotate by cycle number:
-   - N mod 4 == 0: quality (2b) + security (2c)
-   - N mod 4 == 1: test coverage (2a) + performance (2d)
-   - N mod 4 == 2: roadmap review + dead code (2e)
-   - N mod 4 == 3: doc drift (2f) + dep audit
+**Smoke test** (`$ARGUMENTS` = `smoke`): Start server, hit routes, check for crashes/errors. Functional test, not code scan.
 
-**Scan dimensions** (adapt to detected language — these are categories, not search strings):
-- **2a Test coverage** — files with zero test coverage, complex untested functions, TODO markers
-- **2b Quality** — unhandled errors and force-unwraps on user input, overly long functions, debug leftovers
-- **2c Security** — injection risks, hardcoded secrets, unvalidated input at boundaries. If the `security-guidance` plugin is installed, it provides real-time PreToolUse monitoring of 9 security patterns — leverage its findings.
-- **2d Performance** — N+1 queries, blocking calls in async context, missing caching opportunities
-- **2e Dead code** — unused exports, unused dependencies, commented-out blocks
-- **2f Doc drift** — CLAUDE.md contracts vs actual code, stale README sections
+**Opportunity scan** (on `/overseer suggest` or diminishing returns): Run `/engineering:tech-debt` if available, then analyze for missing capabilities, perf opportunities, DX improvements, architecture wins, and intent gaps.
 
-**Intent analysis** (integrated into all scans):
-When scanning a module or component, don't just look for pattern violations. Understand
-what the code is *trying to do* — its purpose, its contracts, its assumptions. Compare
-intent vs implementation:
-- Does the error handling match the failure modes?
-- Are the abstractions appropriate for the actual usage patterns?
-- Is there missing functionality that the architecture clearly anticipates?
-- Are there half-finished features or TODO breadcrumbs indicating planned work?
+**Delegation:** Use `feature-dev:code-explorer` (Haiku, read-only) for scanning. Escalate findings needing control/data flow analysis to `feature-dev:code-reviewer`.
 
-Record intent observations in the knowledge base for future cycles.
-
-**Smoke test** (when `$ARGUMENTS` is `smoke`):
-Skip the normal dimension rotation entirely. Instead:
-1. Identify the project's start command (from state, CLAUDE.md, or package.json scripts)
-2. Start the server/app in a Bash subagent
-3. Hit the main routes/endpoints (read from router files or knowledge base)
-4. Check for: HTTP errors, crash on startup, missing env vars, broken pages
-5. Report results as findings (critical for crashes, high for errors, medium for warnings)
-6. Stop the server
-This is a functional test, not a code scan.
-
-**Roadmap review** (when in rotation):
-- Read `docs/roadmap.json`, `ROADMAP.md`, or GitHub issues for current milestone
-- Identify next incomplete item (respect dependency order)
-- Cross-reference with `TODO`/`FIXME` for partial implementations
-
-**Opportunity scan** (when triggered by `/overseer suggest` or diminishing returns):
-First, run `/engineering:tech-debt` via the Skill tool if available — it provides built-in
-categorization and prioritization of tech debt. Then analyze the codebase for new work
-using the knowledge base as foundation. Look for:
-- Missing capabilities that similar projects typically have (caching, rate limiting, CLI,
-  monitoring, pagination, search, auth improvements)
-- Performance opportunities (indexing, lazy loading, connection pooling, build optimization)
-- DX improvements (better error messages, dev tooling, test helpers, scripts)
-- Architecture wins (extract shared code, add middleware, improve type safety)
-- **Intent gaps** — places where the code architecture suggests a feature that doesn't exist
-  yet (e.g., an interface with one implementation that clearly expects more, a config system
-  with unused extension points, a plugin architecture with no plugins)
-
-Present 3-5 concrete, actionable suggestions as `[PRESENTING]` with `AskUserQuestion`.
-Each suggestion: one sentence summary + why it matters. Let the user pick one to start,
-queue several, or dismiss all. Tag accepted suggestions as `[USER]` queue items.
-
-**Pattern detection:** If 3+ instances of the same issue appear (e.g., 4 functions >80 lines),
-create ONE systematic finding instead of N separate ones.
-
-**Delegation:** Use built-in subagent types for analysis:
-
-| Task | Subagent type | Why |
-|------|---------------|-----|
-| Codebase scanning (all dimensions) | `feature-dev:code-explorer` | Runs on Haiku, read-only, designed for tracing execution paths and mapping architecture |
-| Deep analysis of flagged findings | `feature-dev:code-reviewer` | Confidence-based filtering, catches real issues not pattern noise |
-| Architecture assessment | `feature-dev:code-architect` | Designs implementations from existing patterns, good for feature planning |
-| Tech debt audit (when in rotation) | Invoke `/engineering:tech-debt` via Skill tool | Built-in categorization and prioritization |
-
-Spawn `feature-dev:code-explorer` subagents per dimension in parallel — they run on Haiku
-(fast and cheap). If a finding requires reasoning about control flow or data flow (e.g.,
-auth logic, race conditions, complex state), escalate to `feature-dev:code-reviewer` for
-deeper confidence-based analysis. Small projects (<20 files): inline Grep/Glob only.
-
-**Output:** 1-5 ranked findings in `open_findings`. Each has: id, phase, summary, severity
-(critical/high/medium/low), confidence (high/medium/low), suggested action. Update the
-knowledge base with any new understanding gained during analysis.
+**Output:** 1-5 ranked findings → `open_findings` in state.
 
 ### 3. Plan `[PRESENTING]`
 
-**Mode: Advisor.** Present tradeoffs honestly. Recommend one option. Be brief.
+**Auto-skip** for high confidence (balanced/aggressive tier) — go to Phase 4.
 
-**Apply autonomy tier first:**
-- High confidence + balanced/aggressive tier → skip to Phase 4, no presentation
-- Medium confidence + aggressive tier → skip to Phase 4, no presentation
-- All other cases → present to user
+**Straightforward fixes:** Plan inline. No brainstorming.
 
-**For straightforward fixes** (bug, test gap, quality issue, dead code):
-- Plan inline: files to change, how, verification step
-- No brainstorming. One obvious approach.
+**Features:** Spawn `feature-dev:code-architect` for implementation blueprints. Write to `.claude/overseer-plan.md`. Multi-step features resume from existing plan.
 
-**Multi-step features:** If a feature spans multiple cycles, don't re-plan from scratch.
-Check `.claude/overseer-plan.md` — if the current item continues an in-progress feature,
-resume the existing plan at the next uncompleted step.
-
-**For features and ambiguous items:**
-- Spawn a `feature-dev:code-architect` subagent to design the implementation — it analyzes
-  existing codebase patterns and provides blueprints with specific files to create/modify,
-  component designs, data flows, and build sequences
-- 2-3 approaches with tradeoffs (only when genuinely different)
-- MVP vs full scope
-- Write to `.claude/overseer-plan.md` (overwritten each cycle, unless continuing a multi-step plan)
-
-**Present to user** `[BLOCKED]`:
-- Show the finding/item, source tag (`[USER]` for queue items), and proposed action
-- `AskUserQuestion`: the plan / "skip" / "queue something else" / "autopilot" / "stop"
+**Otherwise** `[BLOCKED]`: Present finding + plan via `AskUserQuestion`.
 
 ### 4. Execute `[WORKING]`
 
-**Mode: Surgeon.** Minimal changes. Touch only what's necessary. Verify before and after.
+**Worktree isolation:** `git worktree add -b overseer/cycle-N-<desc> .claude/worktrees/cycle-N main`
+Track in `active_worktrees` state. All edits in worktree. Build+test there. Commit there. Fall back to feature branch if worktrees unavailable.
 
-**Worktree isolation:** Every execution phase creates an isolated worktree branch:
+**Delegation:**
 
-```
-Branch naming: overseer/cycle-N-<short-description>
-Example: overseer/cycle-7-fix-sql-injection
-```
+| Scope | Approach |
+|-------|----------|
+| ≤2 files | Inline |
+| 3-5 files | Single sonnet subagent |
+| 6+ files | Parallel sonnet subagents |
 
-**Worktree workflow:**
-1. Create a new branch from main: `git worktree add -b <branch-name> .claude/worktrees/cycle-N main`
-2. **Track it:** Append `{ "path": ".claude/worktrees/cycle-N", "branch": "<branch-name>", "cycle": N }` to `active_worktrees` in state
-3. Spawn the execution subagent with `isolation: "worktree"` OR direct it to work in
-   `.claude/worktrees/cycle-N`
-4. All edits happen in the worktree — main branch stays clean
-5. Build and test in the worktree to verify changes
-6. Commit in the worktree branch
-7. Proceed to Phase 5 (PR + Review)
+**Subagent types** (prefer specialized over general-purpose):
 
-**If worktrees are unavailable** (e.g., permission issues, not a git repo), fall back to
-working on a feature branch directly: `git checkout -b overseer/cycle-N-<desc>`.
+| Task | Type | Model |
+|------|------|-------|
+| Exploration/scanning | `feature-dev:code-explorer` | Haiku |
+| Code review | `feature-dev:code-reviewer` | Inherits |
+| Deep security review | `coderabbit:code-reviewer` | Inherits |
+| Architecture design | `feature-dev:code-architect` | Inherits |
+| Quality pass | `code-simplifier:code-simplifier` | Sonnet |
+| Mechanical fix | Inline or haiku | Haiku |
+| Debugging/features | General-purpose | Sonnet |
 
-**Delegate by complexity:**
+**Verification:** Build + targeted tests. Fails → fix (up to 3 attempts) → revert and report.
 
-| Task type | Delegate to |
-|-----------|------------|
-| Any fix touching ≤2 files | Inline (no subagent — overhead isn't worth it) |
-| Fix touching 3+ files, add tests, docs | Single sonnet subagent |
-| Feature touching ≤5 files | Single sonnet subagent (no coordination layer) |
-| Feature touching 6+ files | Coordinate parallel sonnet subagents |
-| Architecture decision | Plan subagent first, then sonnet for edits |
-
-**Model selection and subagent types:**
-
-| Task | Subagent type | Model | Cost |
-|------|---------------|-------|------|
-| Codebase exploration | `feature-dev:code-explorer` | Haiku | Low |
-| Code review | `feature-dev:code-reviewer` | Inherits | Low-Med |
-| Deep security review | `coderabbit:code-reviewer` | Inherits | Med |
-| Architecture design | `feature-dev:code-architect` | Inherits | Med |
-| Quality pass | `code-simplifier:code-simplifier` | Sonnet | Med |
-| Mechanical fix (imports, typos) | Inline or haiku general-purpose | Haiku | Low |
-| Debugging (build errors, test failures) | Sonnet general-purpose | Sonnet | Med |
-| Complex feature implementation | Sonnet general-purpose | Sonnet | Med-High |
-
-Prefer specialized subagent types over general-purpose — they have optimized prompts and
-tool restrictions. Defer to CLAUDE.md if it specifies a subagent policy.
-
-**Verification:** Re-run build + targeted tests (haiku Bash subagents, parallel). If the
-fix touched ≤3 files, run only related tests first; run full suite only if targeted tests
-pass. If fails, fix (up to 3 attempts). If still failing after 3, revert and report.
-
-**Stuck detection:** If the same finding has been attempted 3+ consecutive cycles without
-resolution, mark it deferred, enter `[BLOCKED]`, and ask the user for guidance.
+**Stuck detection:** 3+ consecutive failed cycles on same finding → defer, `[BLOCKED]`.
 
 ### 5. PR & Code Review `[WORKING]`
 
-**Mode: Quality Gate.** Every change gets reviewed before merging. No exceptions.
+**PR creation:** Push branch, `gh pr create` with title `[overseer/cycle-N] Description`, body with summary/category/trigger/verification. See reference.md for template.
 
-**PR creation:**
-1. Push the worktree branch to the remote
-2. Create a PR using `gh pr create`:
-   ```
-   Title: [overseer/cycle-N] Short description
-   Body:
-   ## Summary
-   - What changed and why
+**Reviewer fallback chain** (use first available):
+1. `code-review` or `pr-review-toolkit` plugin — most capable (4-6 parallel agents, confidence scoring, git blame)
+2. `feature-dev:code-reviewer` — 3 parallel agents, confidence threshold 80%
+3. `coderabbit:code-reviewer` — deep analysis, all tools
+4. General-purpose sonnet with review prompt from reference.md
 
-   ## Category
-   bugfix|feature|test|quality|docs|perf|security|deps
+For security changes, prefer `coderabbit:code-reviewer` or `code-review` plugin. For architecture changes, two-pass: `feature-dev:code-reviewer` then escalate.
 
-   ## Trigger
-   Phase 2b: unwrap() in auth handler
+**Fix review concerns:** Append commits (no force-push), re-push, re-review on incremental diff. Up to 2 rounds. Then `[PRESENTING]` with unresolved concerns.
 
-   ## Verification
-   - Build: PASS/FAIL
-   - Tests: X/Y passing
-   - Targeted tests run: [list]
-
-   Generated with [Claude Code Overseer](https://github.com/abishop1990/claude-overseer)
-   ```
-
-**Code review — mandatory subagent review:**
-After creating the PR, spawn a **separate code-reviewer subagent** to review the changes.
-This subagent is independent from the one that wrote the code.
-
-**Reviewer selection by change type:**
-
-| Change type | Reviewer | Why |
-|-------------|----------|-----|
-| Standard fix/feature | `feature-dev:code-reviewer` | Launches 3 parallel agents (simplicity/DRY, bugs/correctness, conventions). Confidence threshold 80%. Cost-efficient. |
-| Security-sensitive change | `coderabbit:code-reviewer` | Thorough analysis with all tools. Or use the `code-review` plugin (`/code-review`) if installed — it runs 4 parallel agents including git blame history analysis. |
-| Architecture/API change | `feature-dev:code-reviewer` + escalate unresolved to `coderabbit:code-reviewer` | Two-pass review for critical changes |
-| Pre-merge (when remote has GitHub) | `/code-review --comment` (if `code-review` plugin installed) | Posts inline PR comments with confidence-scored issues. 4 agents: 2x CLAUDE.md compliance, 1x bug detector, 1x history analyzer. |
-
-**Available review plugins** (use if installed in the target project):
-- **`code-review` plugin** (Anthropic) — 4 parallel agents with confidence scoring, CLAUDE.md
-  compliance auditing, git blame context. Use with `/code-review` or `/code-review --comment`
-  to post inline PR comments. Best option when available.
-- **`pr-review-toolkit` plugin** (Anthropic) — 6 specialized agents: comment-analyzer,
-  test-analyzer, silent-failure-hunter, type-design-analyzer, code-reviewer, code-simplifier.
-  Most thorough review available.
-
-**Detection:** On first cycle, check if these plugins are installed by looking for their
-skill files. Record availability in state as `"available_plugins"`. Prefer plugin-based
-review when available; fall back to subagent-based review otherwise.
-
-**Review prompt** (for subagent-based review when no plugin is available):
-```
-Review this PR diff for the overseer autonomous development loop.
-
-Context: [one-sentence description of what was changed and why]
-
-Review the diff (git diff main...<branch>) for:
-- Correctness: does the change do what it claims?
-- Security: injection risks, unvalidated input, secret exposure
-- Edge cases: error handling gaps, nil/null paths, boundary conditions
-- Side effects: unintended changes to behavior elsewhere
-- Test coverage: are the changes adequately tested?
-- Style: does it match project conventions?
-
-Rate: APPROVE, REQUEST_CHANGES, or COMMENT
-If REQUEST_CHANGES: list specific, actionable concerns with file:line references.
-Try hard to find real problems — don't rubber-stamp.
-```
-
-**Reviewer fallback chain** (most capable → most available):
-1. `code-review` or `pr-review-toolkit` plugin (if installed)
-2. `feature-dev:code-reviewer` subagent (3 parallel review agents, confidence-filtered)
-3. `coderabbit:code-reviewer` subagent (deep analysis, all tools)
-4. General-purpose sonnet subagent with the review prompt above
-
-**Fix review concerns:**
-If the reviewer returns `REQUEST_CHANGES`:
-1. Parse each concern into an actionable fix
-2. Apply fixes in the same worktree branch (append new commits, do not amend/force-push)
-3. Re-run build + tests
-4. Push the new commits: `git push` (regular push, not force-push — PR shows full history)
-5. Re-run the review subagent on the incremental diff (`git diff <last-reviewed-commit>..HEAD`)
-6. Repeat up to 2 review rounds. If still not approved after 2 rounds, enter `[PRESENTING]`
-   and show the user the unresolved concerns.
-
-**If reviewer returns APPROVE:**
-- Proceed to Phase 6 (Merge)
-
-**Review bypass** (only for trivial changes where review overhead > value):
-- Single-line typo fixes
-- Import ordering
-- Whitespace-only changes
-These skip review but still go through PR for audit trail.
+**Review bypass** (trivial only): single-line typos, import ordering, whitespace.
 
 ### 6. Merge & Update `[WORKING]`
 
-**Mode: Clerk.** Merge cleanly. Update state. Clean up. Loop.
+1. `gh pr merge --squash --delete-branch`
+2. `git checkout main && git pull`
+3. `git worktree remove .claude/worktrees/cycle-N`
+4. Remove from `active_worktrees` in state
 
-**Merge flow:**
-1. Merge the PR: `gh pr merge --squash --delete-branch`
-2. Return to main branch and pull: `git checkout main && git pull`
-3. Clean up the worktree: `git worktree remove .claude/worktrees/cycle-N`
-4. **Remove from tracking:** Delete the matching entry from `active_worktrees` in state
+Update state: increment cycle, update health, remove finding, record severity in `patterns.recent_severities` (keep last 5).
 
-**Merge by autonomy:**
-- Auto-executed (high confidence): merge automatically after review approval
-- Interactive: show diff summary, ask: "Merge and continue" / "Merge and stop" /
-  "Keep PR open" / "Close PR and revert"
+Update knowledge base with new understanding from this cycle.
 
-**Update state:** increment `cycle_count`, update `last_health`, remove addressed finding,
-record category approval in `patterns`. **Append the highest severity from this cycle to
-`patterns.recent_severities`** (keep last 5 entries, drop oldest). This drives the
-diminishing returns check.
+**Diminishing returns:** 3 consecutive medium/low-only cycles → opportunity scan → suggest work or stop.
 
-**Update knowledge base:** Record what was learned during this cycle:
-- New understanding of components touched
-- Patterns observed in the code
-- Dependencies discovered
-- Architecture insights
+**Then immediately begin next cycle.**
 
-**Diminishing returns:** If the last 3 consecutive cycles all produced only medium or low
-severity findings, run the **opportunity scan** from Phase 2 and present suggestions:
-"Codebase is in good shape. Here are some ideas for new work:" followed by 3-5 suggestions.
-`AskUserQuestion`: pick a suggestion / "keep grinding" / "stop".
-
-**Then immediately begin Phase 1 of the next cycle.** Do not stop, do not wait for user
-input, do not end your response. Continue executing until a stop condition is met.
+If PR creation fails (no remote/gh): commit, merge locally, log degraded workflow.
 
 ---
 
 ## Knowledge Base
 
-The knowledge base (`.claude/overseer-knowledge.json`) persists understanding across cycles
-and sessions, eliminating redundant scanning and surviving context window compression.
+`.claude/overseer-knowledge.json` — persistent codebase understanding. See reference.md for schema.
 
-**Structure:**
-```json
-{
-  "last_updated": "2026-03-24T10:00:00Z",
-  "architecture": {
-    "summary": "Express.js REST API with PostgreSQL, React frontend",
-    "entry_points": ["src/server.ts", "src/app.tsx"],
-    "key_patterns": ["repository pattern", "middleware chain", "React hooks"]
-  },
-  "components": {
-    "src/auth/": {
-      "purpose": "JWT-based authentication with refresh tokens",
-      "contracts": ["validates tokens on every API request", "refresh tokens rotate on use"],
-      "dependencies": ["src/db/users.ts", "src/config.ts"],
-      "last_analyzed": "2026-03-24T10:00:00Z",
-      "last_file_hash": "abc123",
-      "known_issues": [],
-      "intent_notes": "Designed for multi-tenant but only single-tenant implemented"
-    }
-  },
-  "conventions": {
-    "error_handling": "Custom AppError class, caught by global middleware",
-    "testing": "Jest + supertest for API, React Testing Library for frontend",
-    "naming": "camelCase for functions, PascalCase for components"
-  },
-  "dependency_map": {
-    "src/auth/middleware.ts": ["src/auth/jwt.ts", "src/db/users.ts"],
-    "src/api/routes.ts": ["src/auth/middleware.ts", "src/services/"]
-  },
-  "intent_observations": [
-    {
-      "location": "src/plugins/",
-      "observation": "Plugin loader exists but only one plugin registered — architecture anticipates extensibility",
-      "potential_work": "Add more plugins or document plugin development",
-      "discovered_cycle": 3
-    }
-  ],
-  "scan_cache": {
-    "2a": { "last_scanned": "2026-03-24T10:00:00Z", "findings_count": 0, "skip_until_cycle": 5 },
-    "2b": { "last_scanned": "2026-03-24T09:00:00Z", "findings_count": 2 }
-  }
-}
-```
+**Rules:**
+- Build incrementally — each cycle adds understanding for touched components
+- Invalidate on change — stale when `git diff` shows modification
+- Intent over implementation — record purpose and gaps, not just structure
+- Compact — summaries only, under 50KB
+- Trust but verify — re-analyze if findings contradict stored knowledge
 
-**Knowledge base rules:**
-- **Build incrementally.** Don't try to map the entire codebase at once. Each cycle adds
-  understanding for the components it touches.
-- **Invalidate on change.** When `git diff` shows a file changed, mark that component's
-  knowledge as stale (clear `last_file_hash`).
-- **Intent over implementation.** Record *what the code is trying to do* and *what's
-  missing*, not just what files exist.
-- **Compact.** Summaries only, no raw code. The knowledge base should stay under 50KB.
-- **Trust but verify.** Knowledge from previous sessions may be outdated. If a finding
-  contradicts stored knowledge, re-analyze that component.
-
-**First-cycle knowledge bootstrap:**
-On the very first run (no knowledge base exists), spawn a `feature-dev:code-explorer`
-subagent (runs on Haiku — fast and cheap, designed for exactly this task). It will:
-1. Map the directory structure and identify major components
-2. Trace execution paths and map architecture layers
-3. Document patterns, abstractions, and dependencies
-4. Identify the testing strategy and conventions
-5. Record everything in the knowledge base
-
-This takes ~2-3 minutes but saves significant time across all future cycles.
+**Bootstrap:** First run, spawn `feature-dev:code-explorer` to map architecture, trace execution, document patterns. Runs once per project.
 
 ---
 
-## User Queue
+## User Queue & Interrupts
 
-Users can add items anytime: "add [description]" or "queue [description]".
+**Queue:** "add [desc]" or "queue [desc]" → `user_queue` in state. Checked in Phase 1, priority over findings. "show queue" / "drop [item]".
 
-- Append to `user_queue` in state with priority (user-specified or default: medium)
-- Queue items checked in Phase 1 — they take priority over analysis findings
-- Present in Phase 3 tagged `[USER]`
-- "show queue" to list, "drop [item]" to remove
+**Interrupts:** Acknowledge, handle, resume. Finish current PR first. User always has priority.
 
-## User Interrupts
+**Time-boxed:** Skip to summary with <3 min left. Never leave open worktrees.
 
-The user can message at any point. When they do:
-1. Acknowledge what they said and what phase you were in
-2. Handle it (answer, execute, queue it, or redirect focus)
-3. Resume or restart cycle based on whether project state changed
-
-If mid-PR, finish the PR first. User always has priority over the cycle.
-
-## Time-Boxed Sessions
-
-If the user specifies a time limit: track elapsed time, skip to summary if <3 minutes
-remain, never leave uncommitted changes or open worktrees.
-
-## Session Summary (on stop/exit)
+## Session Summary (on stop)
 
 ```
-Cycles: N | PRs: [list] | Lines: +X/-Y | Files touched: Z
-Reviews: N passed, N had fixes | Avg review rounds: X
-Deferred: [list] | Queue remaining: [list]
-Top 3 remaining: [findings]
-Warning trend: X → Y | Tests: A → B
-Knowledge base: N components mapped, N intent observations
+Cycles: N | PRs: [list] | Lines: +X/-Y | Files: Z
+Reviews: N passed, N fixed | Deferred: [list] | Queue: [list]
+Warnings: X→Y | Tests: A→B | Knowledge: N components mapped
 ```
-
----
 
 ## Context Management
 
-Long sessions degrade without active context management:
-
-- **Subagent-first:** All analysis (Phase 2), all code execution (Phase 4), all reviews
-  (Phase 5), and all build/test runs use subagents. The main conversation only sees
-  decisions and summaries.
-- **Knowledge base is long-term memory:** Anything worth remembering across cycles and
-  sessions goes in `overseer-knowledge.json`. Anything worth remembering within a single
-  cycle goes in `overseer-state.json`. The conversation context holds only the current
-  decision.
-- **Structured narration:** Open each phase with one line saying what you're doing, close
-  it with one line saying what you found. Use `→` for actions and `←` for results. This
-  lets engineers follow execution without requiring them to infer state from subagent output.
-- **State file is working memory:** Read state at cycle start, write at cycle end.
-  Re-read if context feels stale.
-- **File contents stay in subagents:** When a subagent reads files for analysis or edits,
-  the main conversation receives only the finding summary or confirmation, never raw
-  file contents.
-- **Worktree isolation prevents conflicts:** Each cycle's work is in its own worktree,
-  so parallel subagents can't interfere with each other or with main.
-- **PR as checkpoint:** Each PR is a durable checkpoint. If context is lost, the PR
-  description and diff reconstruct what happened.
-
-## Run Log
-
-Append to `.claude/overseer-run.log` at each phase transition. Engineers can `tail -f` this file to follow execution in real time. Format — one block per phase:
-
-```
-[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 1 — Triage
-→ git status + build (cargo check) + tests (cargo test)
-← Build: PASS | Tests: 52/52 | Warnings: 3 | Decision: Proceeding to Phase 2
-
-[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 2 — Analyze
-→ Dimensions: 2b (quality), 2c (security) | Files changed: src/auth.rs, src/api.rs
-→ Knowledge base: auth/ already mapped, api/ needs refresh
-← Findings: 2 (1 high, 1 medium)
-   f1 HIGH  auth.rs:42 — unwrap() on user input will panic
-   f2 MED   api.rs:108 — debug log contains sensitive token
-
-[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 4 — Execute
-→ Worktree: .claude/worktrees/cycle-7 (branch: overseer/cycle-7-fix-auth-panic)
-→ Fixing f1 (HIGH, auto-executing) | Files: src/auth.rs
-← Build: PASS | Tests: 52/52 | Result: Fixed
-
-[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 5 — PR & Review
-→ PR #42 created: [overseer/cycle-7] Fix unwrap() panic in auth handler
-→ Review subagent: APPROVE (no concerns)
-← Ready to merge
-
-[YYYY-MM-DD HH:MM:SS] Cycle N | Phase 6 — Merge
-← PR #42 merged | Worktree cleaned up
-← Knowledge base updated: auth/ component refreshed
-```
-
-Use `date "+%Y-%m-%d %H:%M:%S"` via Bash to get the timestamp. Append with `>>`, never overwrite.
-
-## Session State
-
-Read `.claude/overseer-state.json` at session start. Write after each cycle.
-
-```json
-{
-  "cycle_count": 0,
-  "project_type": "rust",
-  "build_cmds": ["cargo check"],
-  "test_cmd": "cargo test",
-  "autonomy": "balanced",
-  "last_health": { "build": "pass", "tests": "52/52", "warnings": 8 },
-  "open_findings": [
-    { "id": "f1", "phase": "2b", "summary": "...", "severity": "high", "confidence": "high" }
-  ],
-  "deferred": ["finding-id"],
-  "user_queue": [
-    { "summary": "Add dark mode", "priority": "high", "added_cycle": 3 }
-  ],
-  "patterns": {
-    "approved_categories": ["test", "quality"],
-    "skipped_categories": [],
-    "last_dimensions": ["2a", "2b"],
-    "recent_severities": ["high", "medium", "low"]
-  },
-  "available_plugins": ["code-review", "pr-review-toolkit"],
-  "active_worktrees": [],
-  "active_prs": [],
-  "notifications": { "channel": "os" }
-}
-```
+- **Subagent-first** — analysis, execution, reviews, builds all in subagents. Main context sees decisions only.
+- **Knowledge base = long-term memory.** State file = working memory. Conversation = current decision.
+- **Structured narration** — `→` actions, `←` results. Skimmable.
+- **File contents stay in subagents.** Never pass raw content to main.
+- **PR as checkpoint** — reconstructs what happened if context is lost.
 
 ## Attention States
 
-Display at the start of every message:
-- `[WORKING]` — Autonomous. User can walk away. Each message must follow the structured progress format (rule 13): open with `→ [Phase N — Label] what's running`, close with `← result`.
-- `[PRESENTING]` — Report or plan ready for review.
-- `[BLOCKED]` — Cannot continue without user input. Send notification.
-
-**Example `[WORKING]` message:**
-```
-[WORKING]
-
-→ [Phase 1 — Triage] Running git state + build + tests in parallel...
-← Build: PASS | Tests: 47/47 | Warnings: 2 | No backlog items
-→ [Phase 2 — Analyze] Knowledge check: api/ stale, auth/ current
-→ Scanning 2b (quality) + 2c (security) on stale components...
-← Found 1 finding: HIGH src/api.rs:88 — SQL query built with string interpolation
-→ [Phase 4 — Execute] Creating worktree: overseer/cycle-7-fix-sql-injection
-→ Fixing HIGH finding (auto-executing, Balanced tier)...
-← Build: PASS | Tests: 47/47
-→ [Phase 5 — PR & Review] PR #15 created, spawning review subagent...
-← Review: APPROVE | No concerns
-→ [Phase 6 — Merge] Merging PR #15, cleaning up worktree...
-← Merged. Knowledge base updated. Starting next cycle.
-```
+- `[WORKING]` — autonomous, structured progress format
+- `[PRESENTING]` — needs review
+- `[BLOCKED]` — needs input, send notification
 
 ## Notifications
 
-On first run, if state has no `notifications` config, ask once (`AskUserQuestion`):
-OS toast, Slack webhook, ntfy.sh, or none. Save to state. On `[BLOCKED]`, fire via
-`notify-send`, `osascript`, PowerShell toast, or `curl` as appropriate.
-
-## Analysis Guidelines
-
-- **Be concrete.** "`scoring.rs:42` — `unwrap()` on user input, will panic on invalid data"
-- **Prioritize by impact.** Crash bug > missing test > style nit
-- **Respect project conventions.** If CLAUDE.md explains it, don't flag it
-- **Top 5 max per report.** Pick the best 5, note "N more in [category]"
-- **Celebrate progress.** "Tests: 45 → 52, warnings: 12 → 8"
-- **Understand intent.** Before flagging code, understand what it's trying to achieve. A
-  "messy" function may be handling genuinely complex business logic.
+First run: ask once — OS toast, Slack, ntfy.sh, or none. Fire on `[BLOCKED]`.
 
 ## Focus Areas
 
 | Argument | Scope |
 |----------|-------|
-| `bugs` | Quality (2b) + security (2c) scans only |
-| `tests` | Test coverage (2a) only |
-| `perf` | Performance (2d) only |
+| `bugs` | Quality (2b) + security (2c) |
+| `tests` | Test coverage (2a) |
+| `perf` | Performance (2d) |
 | `security` | Security (2c) + dep audit |
-| `roadmap` | Roadmap review only |
+| `roadmap` | Roadmap review |
 | `quality` | Quality (2b) + dead code (2e) + doc drift (2f) |
-| `deps` | Dependency audit only |
+| `deps` | Dependency audit |
 | `smoke` | Start server, hit routes, check responses |
-| `suggest` | Opportunity scan — suggest new features, optimizations, and improvements |
-| `stabilize` | Fix all build warnings, failing tests, and flaky tests — zero tolerance. Also runs `code-simplifier:code-simplifier` subagent on recently changed files for quality passes. |
-| (empty) | Full triage across all dimensions |
-
-## Worktree Troubleshooting
-
-If worktree creation fails:
-- Check if `.claude/worktrees/` exists; create it if not
-- Check for stale worktrees: `git worktree list` and prune dead ones
-- Fall back to feature branches if worktrees are unsupported
-- Never leave orphaned worktrees — track them in `active_worktrees` state
-
-If PR creation fails (no remote, no `gh` CLI):
-- Commit to the branch anyway
-- Log the PR failure in the run log
-- Merge locally: `git checkout main && git merge <branch> && git branch -d <branch>`
-- Note the degraded workflow in the session summary
+| `suggest` | Opportunity scan — suggest new work |
+| `stabilize` | Zero-tolerance warnings/tests + `code-simplifier` quality pass |
+| (empty) | Full triage |
