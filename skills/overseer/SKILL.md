@@ -36,7 +36,7 @@ These override all other instructions when in conflict:
 7. **One plan file** — `.claude/overseer-plan.md`, overwritten each cycle
 8. **Diff-scoped re-analysis** — changed files first, then rotation
 9. **Batch similar issues** — 3+ of same pattern = one systematic finding
-10. **Trust CI** — if the project has CI, never run the full test suite in the loop. Lint + targeted tests post-execution only. CI runs on the PR.
+10. **Test scope** — lint post-execution always (seconds). Targeted tests on touched files always (fast). Full suite once as pre-merge gate, run async — never block the loop on it.
 11. **Negative cache** — zero-finding dimension + no file changes = skip 2 cycles
 12. **Structured progress** — `→ [Phase N — Label] action` then `← result`
 13. **Subagent isolation** — scans/execution/reviews in subagents. Never dump raw output into main context.
@@ -155,16 +155,22 @@ Track in `active_worktrees` state. All edits in worktree. Commit there. Fall bac
 | Mechanical fix | Inline or haiku | Haiku |
 | Debugging/features | General-purpose | Sonnet |
 
-**Post-execution verification** (after changes are made, before PR):
+**Post-execution verification** (after changes, before PR):
 
-| Check | When | How |
-|-------|------|-----|
-| Lint + type-check | Always | Fast (seconds). Catches syntax errors and obvious breakage. |
-| Targeted unit tests | Changed files ≤5 | Run tests for touched modules only. Skip if `has_ci: true` and change is low-risk. |
-| Full test suite | Only if no CI | Never run in the loop when CI will run it on the PR. |
+**Step 1 — Lint/type-check (always, seconds):** Catches syntax errors and type breakage immediately. If this fails, fix before proceeding.
+
+**Step 2 — Targeted tests (always, fast):** Run tests for the files you touched plus their direct dependents (use the knowledge base dependency map). This is the primary safety net and is cheap because it's scoped.
+
+**Step 3 — Full test suite (pre-merge only, once):** Run the full suite once — not every cycle, but as the final gate before `gh pr merge`. Run in a Bash subagent so it doesn't block the loop: kick it off, proceed to PR creation and review while it runs, then check the result before merging.
+
+```
+Cycle N:  Execute → lint → targeted tests → open PR → review → [full suite running in background] → merge
+Cycle N+1: Already executing next task while full suite runs
+```
+
+If targeted tests pass but full suite fails: fix the failure before merging, but don't block the next cycle's execution from starting.
 
 If lint/targeted tests fail: fix (up to 3 attempts) → revert and mark `last_health.status: failed`.
-If CI is present and lint passes: trust CI to catch the rest. Proceed to PR.
 
 **Stuck detection:** 3+ consecutive failed cycles on same finding → defer, `[BLOCKED]`.
 
