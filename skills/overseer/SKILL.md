@@ -109,6 +109,9 @@ deprioritize it in analysis rotation.
 - **Build initial knowledge base** — if `.claude/overseer-knowledge.json` does not exist,
   run the knowledge bootstrap described in the Knowledge Base section below. This runs
   once and persists across sessions. Do NOT duplicate this — only one bootstrap per project.
+- **Detect available plugins** — check for installed review plugins (`code-review`,
+  `pr-review-toolkit`, `security-guidance`). Record in state as `"available_plugins": []`.
+  This determines the review strategy in Phase 5.
 
 **Uncommitted changes on first cycle:** If `git status` shows WIP (broken tests, incomplete
 features), ask user before committing. Otherwise proceed normally.
@@ -163,7 +166,7 @@ Only re-run build/test when there are uncommitted changes or it's the first cycl
 **Scan dimensions** (adapt to detected language — these are categories, not search strings):
 - **2a Test coverage** — files with zero test coverage, complex untested functions, TODO markers
 - **2b Quality** — unhandled errors and force-unwraps on user input, overly long functions, debug leftovers
-- **2c Security** — injection risks, hardcoded secrets, unvalidated input at boundaries
+- **2c Security** — injection risks, hardcoded secrets, unvalidated input at boundaries. If the `security-guidance` plugin is installed, it provides real-time PreToolUse monitoring of 9 security patterns — leverage its findings.
 - **2d Performance** — N+1 queries, blocking calls in async context, missing caching opportunities
 - **2e Dead code** — unused exports, unused dependencies, commented-out blocks
 - **2f Doc drift** — CLAUDE.md contracts vs actual code, stale README sections
@@ -353,11 +356,24 @@ This subagent is independent from the one that wrote the code.
 
 | Change type | Reviewer | Why |
 |-------------|----------|-----|
-| Standard fix/feature | `feature-dev:code-reviewer` | Confidence-based filtering, reports only high-priority issues, read-only tools, cost-efficient |
-| Security-sensitive change | `coderabbit:code-reviewer` | Deeper analysis, all tools available, thorough security review |
+| Standard fix/feature | `feature-dev:code-reviewer` | Launches 3 parallel agents (simplicity/DRY, bugs/correctness, conventions). Confidence threshold 80%. Cost-efficient. |
+| Security-sensitive change | `coderabbit:code-reviewer` | Thorough analysis with all tools. Or use the `code-review` plugin (`/code-review`) if installed — it runs 4 parallel agents including git blame history analysis. |
 | Architecture/API change | `feature-dev:code-reviewer` + escalate unresolved to `coderabbit:code-reviewer` | Two-pass review for critical changes |
+| Pre-merge (when remote has GitHub) | `/code-review --comment` (if `code-review` plugin installed) | Posts inline PR comments with confidence-scored issues. 4 agents: 2x CLAUDE.md compliance, 1x bug detector, 1x history analyzer. |
 
-**Review prompt** (pass to the reviewer subagent):
+**Available review plugins** (use if installed in the target project):
+- **`code-review` plugin** (Anthropic) — 4 parallel agents with confidence scoring, CLAUDE.md
+  compliance auditing, git blame context. Use with `/code-review` or `/code-review --comment`
+  to post inline PR comments. Best option when available.
+- **`pr-review-toolkit` plugin** (Anthropic) — 6 specialized agents: comment-analyzer,
+  test-analyzer, silent-failure-hunter, type-design-analyzer, code-reviewer, code-simplifier.
+  Most thorough review available.
+
+**Detection:** On first cycle, check if these plugins are installed by looking for their
+skill files. Record availability in state as `"available_plugins"`. Prefer plugin-based
+review when available; fall back to subagent-based review otherwise.
+
+**Review prompt** (for subagent-based review when no plugin is available):
 ```
 Review this PR diff for the overseer autonomous development loop.
 
@@ -376,10 +392,11 @@ If REQUEST_CHANGES: list specific, actionable concerns with file:line references
 Try hard to find real problems — don't rubber-stamp.
 ```
 
-`feature-dev:code-reviewer` is preferred because it uses confidence-based filtering
-(only reports issues it's confident about) and has read-only tools, making it fast and
-cheap. Fall back to `coderabbit:code-reviewer` for deeper analysis or if feature-dev
-is unavailable. Last resort: general-purpose sonnet subagent with the review prompt above.
+**Reviewer fallback chain** (most capable → most available):
+1. `code-review` or `pr-review-toolkit` plugin (if installed)
+2. `feature-dev:code-reviewer` subagent (3 parallel review agents, confidence-filtered)
+3. `coderabbit:code-reviewer` subagent (deep analysis, all tools)
+4. General-purpose sonnet subagent with the review prompt above
 
 **Fix review concerns:**
 If the reviewer returns `REQUEST_CHANGES`:
@@ -627,6 +644,7 @@ Read `.claude/overseer-state.json` at session start. Write after each cycle.
     "last_dimensions": ["2a", "2b"],
     "recent_severities": ["high", "medium", "low"]
   },
+  "available_plugins": ["code-review", "pr-review-toolkit"],
   "active_worktrees": [],
   "active_prs": [],
   "notifications": { "channel": "os" }
