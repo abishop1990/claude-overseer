@@ -17,7 +17,7 @@ reviewed PR. Bias toward action over analysis.
 **Keep looping.** Only pause for: `[BLOCKED]`, user says "stop", time limit, or diminishing
 returns. Adapt to any stack — detect from project files and CLAUDE.md.
 
-**Time split:** 20% triage, 10% plan, 50% execute, 10% review, 10% verify+commit.
+**Time split:** 10% triage, 10% plan, 65% execute, 10% review, 5% commit.
 
 ## Focus Area
 
@@ -36,7 +36,7 @@ These override all other instructions when in conflict:
 7. **One plan file** — `.claude/overseer-plan.md`, overwritten each cycle
 8. **Diff-scoped re-analysis** — changed files first, then rotation
 9. **Batch similar issues** — 3+ of same pattern = one systematic finding
-10. **Targeted tests** — ≤3 files touched = related tests only, full suite as final check
+10. **Trust CI** — if the project has CI, never run the full test suite in the loop. Lint + targeted tests post-execution only. CI runs on the PR.
 11. **Negative cache** — zero-finding dimension + no file changes = skip 2 cycles
 12. **Structured progress** — `→ [Phase N — Label] action` then `← result`
 13. **Subagent isolation** — scans/execution/reviews in subagents. Never dump raw output into main context.
@@ -65,30 +65,36 @@ On first run, ask the user which tier (+ notification preference):
 
 ### 1. Triage `[WORKING]`
 
+**Triage is cheap.** Git state only — no build, no tests. Health is determined by what
+already happened, not re-verified every cycle.
+
 **First cycle only:**
-- Detect stack (`Cargo.toml`, `package.json`, etc.), read CLAUDE.md for build/test commands
+- Detect stack (`Cargo.toml`, `package.json`, etc.), read CLAUDE.md for build/test/lint commands
+- Detect CI (`/.github/workflows`, `.circleci`, `Jenkinsfile`, etc.) — record as `has_ci: true/false`
 - Bootstrap knowledge base if none exists (see reference.md)
 - Detect installed plugins (`code-review`, `pr-review-toolkit`, `security-guidance`)
-- Cache all in state file
+- Run a **one-time baseline check**: lint + fast type-check only (not full test suite). Record result as `last_health`.
+- Cache all in state file.
 
 **Session resume:** If state exists with `cycle_count > 0`, show status and ask to continue.
+Show last known health from state — do not re-verify unless `last_health.status` is `failed` or `unknown`.
 
-**Every cycle** (parallel batch): git state + build + test.
-
-**Skip verification** if previous cycle passed and no changes since.
+**Every cycle** (one fast Bash call): `git status && git log --oneline -5 && git diff --stat`
 
 **Route:**
 
-| Result | Action |
-|--------|--------|
-| Build/test fails | Phase 3 autonomy gate → Phase 4. (CI/CD and ambiguous failures are guardrails.) |
+| Condition | Action |
+|-----------|--------|
+| `last_health.status` is `failed` | Fix the failure. Phase 3 gate → Phase 4. |
 | User queue has items | Top item → Phase 3 |
 | Open findings exist | Top finding → Phase 3 |
-| All green, no backlog | Phase 2 |
+| Backlog clear | Phase 2 |
+
+**Never run the full test suite in triage.** Tests run post-execution only (Phase 4) and on the PR (CI). The loop stays fast.
 
 ### 2. Analyze & Prioritize `[WORKING]`
 
-Only runs when green and no backlog.
+Only runs when no backlog.
 
 **Knowledge-first:** Read `.claude/overseer-knowledge.json`. Only scan files that are new, modified, or unknown.
 
@@ -127,7 +133,7 @@ Only runs when green and no backlog.
 ### 4. Execute `[WORKING]`
 
 **Worktree isolation:** `git worktree add -b overseer/cycle-N-<desc> .claude/worktrees/cycle-N main`
-Track in `active_worktrees` state. All edits in worktree. Build+test there. Commit there. Fall back to feature branch if worktrees unavailable.
+Track in `active_worktrees` state. All edits in worktree. Commit there. Fall back to feature branch if worktrees unavailable.
 
 **Delegation:**
 
@@ -149,7 +155,16 @@ Track in `active_worktrees` state. All edits in worktree. Build+test there. Comm
 | Mechanical fix | Inline or haiku | Haiku |
 | Debugging/features | General-purpose | Sonnet |
 
-**Verification:** Build + targeted tests. Fails → fix (up to 3 attempts) → revert and report.
+**Post-execution verification** (after changes are made, before PR):
+
+| Check | When | How |
+|-------|------|-----|
+| Lint + type-check | Always | Fast (seconds). Catches syntax errors and obvious breakage. |
+| Targeted unit tests | Changed files ≤5 | Run tests for touched modules only. Skip if `has_ci: true` and change is low-risk. |
+| Full test suite | Only if no CI | Never run in the loop when CI will run it on the PR. |
+
+If lint/targeted tests fail: fix (up to 3 attempts) → revert and mark `last_health.status: failed`.
+If CI is present and lint passes: trust CI to catch the rest. Proceed to PR.
 
 **Stuck detection:** 3+ consecutive failed cycles on same finding → defer, `[BLOCKED]`.
 

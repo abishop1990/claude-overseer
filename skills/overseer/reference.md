@@ -13,7 +13,9 @@ Detailed schemas, templates, and examples. Loaded on demand, not at invocation.
   "build_cmds": ["cargo check"],
   "test_cmd": "cargo test",
   "autonomy": "balanced",
-  "last_health": { "build": "pass", "tests": "52/52", "warnings": 8 },
+  "has_ci": true,
+  "lint_cmd": "npm run lint",
+  "last_health": { "status": "green", "lint": "pass", "warnings": 8, "checked_at_cycle": 1 },
   "open_findings": [
     { "id": "f1", "phase": "2b", "summary": "...", "severity": "high", "confidence": "high" }
   ],
